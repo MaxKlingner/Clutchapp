@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,15 +10,20 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
-import { ensureTutorProfile, fetchMatches } from '../lib/supabase';
+import {
+  creditWallet,
+  ensureTutorProfile,
+  ensureWallet,
+  fetchMatches,
+} from '../lib/supabase';
 import { openStripeCheckoutTest, stripeConfig } from '../services/stripe';
 import TutorProfileEditor from './TutorProfileEditor';
 
-const INITIAL_BALANCE = 50;
 const AMOUNT_PRESETS = [20, 50, 100];
 const LESSON_AMOUNT = 20;
 
@@ -27,13 +32,36 @@ export default function ProfileScreen() {
   const { user } = useUser();
   const { role, switching, switchRole } = useRole();
   const [signingOut, setSigningOut] = useState(false);
-  const [balance, setBalance] = useState(INITIAL_BALANCE);
+  const [balance, setBalance] = useState(0);
+  const [walletLoading, setWalletLoading] = useState(true);
   const [tutorEarnings, setTutorEarnings] = useState({});
   const [busy, setBusy] = useState(false);
   const [selectedAmount, setSelectedAmount] = useState(20);
   const [customAmount, setCustomAmount] = useState('');
 
   const isParent = role !== ROLES.TUTOR;
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      async function loadWallet() {
+        if (!userId) return;
+        setWalletLoading(true);
+        try {
+          const wallet = await ensureWallet(userId, 50);
+          if (!cancelled) setBalance(wallet.balance);
+        } catch {
+          // ignore
+        } finally {
+          if (!cancelled) setWalletLoading(false);
+        }
+      }
+      loadWallet();
+      return () => {
+        cancelled = true;
+      };
+    }, [userId])
+  );
 
   const topUpAmount = (() => {
     const custom = Number(String(customAmount).replace(',', '.'));
@@ -115,11 +143,11 @@ export default function ProfileScreen() {
       });
 
       if (result.paid) {
-        const nextBalance = balance + topUpAmount;
-        setBalance(nextBalance);
+        const wallet = await creditWallet(userId, topUpAmount);
+        setBalance(wallet.balance);
         Alert.alert(
           'Paiement Stripe réussi',
-          `+${topUpAmount} € crédités.\nNouveau solde : ${nextBalance.toFixed(2)} €`
+          `+${topUpAmount} € crédités.\nNouveau solde : ${wallet.balance.toFixed(2)} €`
         );
       } else {
         Alert.alert(
@@ -193,7 +221,11 @@ export default function ProfileScreen() {
         {isParent ? (
           <View style={styles.walletCard}>
             <Text style={styles.walletEyebrow}>Mon Portefeuille</Text>
-            <Text style={styles.balance}>{balance.toFixed(2)} €</Text>
+            {walletLoading ? (
+              <ActivityIndicator color="#1B5E3B" style={{ marginVertical: 16 }} />
+            ) : (
+              <Text style={styles.balance}>{balance.toFixed(2)} €</Text>
+            )}
             <Text style={styles.walletHint}>
               Recharge via Stripe Checkout (mode test — aucun vrai débit)
             </Text>

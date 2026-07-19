@@ -21,6 +21,7 @@ import {
 } from './lib/clerk';
 import { RoleProvider, useRole } from './lib/RoleContext';
 import { ROLES } from './lib/roles';
+import { setupPushNotificationsForUser } from './services/notifications';
 
 const Tab = createBottomTabNavigator();
 
@@ -135,6 +136,22 @@ function RoleGate() {
   useEffect(() => {
     loadRole(userId);
   }, [userId, loadRole]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    let cancelled = false;
+
+    (async () => {
+      const token = await setupPushNotificationsForUser(userId);
+      if (!cancelled && token) {
+        console.log('[push] Token enregistré');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   if (loading) {
     return (

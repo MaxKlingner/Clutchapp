@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -11,45 +13,154 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@clerk/clerk-expo';
 
-import { fetchMessages, sendMessage } from '../lib/supabase';
+import { useRole } from '../lib/RoleContext';
+import { ROLES } from '../lib/roles';
+import {
+  fetchMessages,
+  cancelPaymentRequest,
+  disputePayment,
+  hasReviewForMatch,
+  payPaymentRequest,
+  sendMessage,
+  sendPaymentRequest,
+  submitReview,
+  subscribeToMatchMessages,
+} from '../lib/supabase';
 
-const TUTOR_REPLIES = [
-  'Parfait, on peut organiser une première séance cette semaine.',
-  'Merci pour ton message ! Quelle est la classe de ton enfant ?',
-  'Je suis dispo en soirée. Tu préfères visio ou présentiel ?',
-  'Super question — je te prépare un petit plan de révision.',
-];
+const HOUR_PRESETS = [1, 1.5, 2, 3];
+
+function appendUnique(prev, message) {
+  if (!message?.id) return prev;
+  if (prev.some((item) => item.id === message.id)) return prev;
+  return [...prev, message];
+}
+
+function upsertMessage(prev, message) {
+  if (!message?.id) return prev;
+  const index = prev.findIndex((item) => item.id === message.id);
+  if (index === -1) return [...prev, message];
+  const next = [...prev];
+  next[index] = message;
+  return next;
+}
+
+function formatHours(hours) {
+  const h = Number(hours);
+  if (!Number.isFinite(h)) return '?';
+  return Number.isInteger(h) ? `${h}` : String(h);
+}
+
+function formatMoney(amount) {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return '—';
+  return value.toFixed(2);
+}
 
 export default function ChatScreen({ match, onBack }) {
   const { userId } = useAuth();
+  const { role } = useRole();
+  const listRef = useRef(null);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [payingId, setPayingId] = useState(null);
+  const [actingId, setActingId] = useState(null);
   const [error, setError] = useState(null);
+  const [liveStatus, setLiveStatus] = useState('connecting');
+  const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+  const [selectedHours, setSelectedHours] = useState(2);
+  const [customHours, setCustomHours] = useState('');
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
-  const tutorName = match?.tutor?.name ?? 'Tuteur';
+  const isTutor = role === ROLES.TUTOR;
+  const senderRole = isTutor ? 'tutor' : 'parent';
+  const title = isTutor
+    ? match?.parentName || 'Parent'
+    : match?.tutor?.name || 'Tuteur';
+  const subtitle = isTutor
+    ? 'Conversation avec le parent'
+    : match?.tutor?.subject || 'Conversation';
+  const hourlyRate = Number(match?.tutor?.hourlyRate) || 25;
+  const tutorClerkId = match?.tutor?.clerkId || null;
 
-  async function loadMessages() {
-    setError(null);
-    try {
-      const rows = await fetchMessages(match.id);
-      setMessages(rows);
-    } catch (err) {
-      setError(err?.message ?? 'Erreur de chargement.');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const hoursToRequest = (() => {
+    const custom = Number(String(customHours).replace(',', '.'));
+    if (Number.isFinite(custom) && custom > 0) return custom;
+    return selectedHours;
+  })();
+
+  const estimatedTotal =
+    Math.round(hoursToRequest * hourlyRate * 100) / 100;
+
+  const scrollToEnd = useCallback(() => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd?.({ animated: true });
+    });
+  }, []);
 
   useEffect(() => {
-    loadMessages();
-  }, [match.id]);
+    let cancelled = false;
+
+    async function loadHistory() {
+      if (!match?.id) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const rows = await fetchMessages(match.id);
+        if (!cancelled) setMessages(rows);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err?.message ?? 'Erreur de chargement.');
+          setMessages([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [match?.id]);
+
+  useEffect(() => {
+    if (!match?.id) return undefined;
+
+    setLiveStatus('connecting');
+    const unsubscribe = subscribeToMatchMessages(match.id, {
+      onInsert: (incoming) => {
+        setMessages((prev) => appendUnique(prev, incoming));
+        setLiveStatus('live');
+        scrollToEnd();
+      },
+      onUpdate: (updated) => {
+        setMessages((prev) => upsertMessage(prev, updated));
+        setLiveStatus('live');
+      },
+    });
+
+    setLiveStatus('live');
+
+    return () => {
+      unsubscribe();
+      setLiveStatus('offline');
+    };
+  }, [match?.id, scrollToEnd]);
+
+  useEffect(() => {
+    if (!loading && messages.length) scrollToEnd();
+  }, [loading, messages.length, scrollToEnd]);
 
   async function onSend() {
-    if (!userId || sending || !draft.trim()) return;
+    if (!userId || sending || !draft.trim() || !match?.id) return;
 
     const content = draft.trim();
     setDraft('');
@@ -57,24 +168,14 @@ export default function ChatScreen({ match, onBack }) {
     setError(null);
 
     try {
-      const parentMessage = await sendMessage({
+      const created = await sendMessage({
         matchId: match.id,
         senderId: userId,
-        senderRole: 'parent',
+        senderRole,
         content,
       });
-      setMessages((prev) => [...prev, parentMessage]);
-
-      // Réponse simulée du tuteur
-      const reply =
-        TUTOR_REPLIES[Math.floor(Math.random() * TUTOR_REPLIES.length)];
-      const tutorMessage = await sendMessage({
-        matchId: match.id,
-        senderId: match.tutorId,
-        senderRole: 'tutor',
-        content: reply,
-      });
-      setMessages((prev) => [...prev, tutorMessage]);
+      setMessages((prev) => appendUnique(prev, created));
+      scrollToEnd();
     } catch (err) {
       setError(err?.message ?? 'Envoi impossible.');
       setDraft(content);
@@ -83,8 +184,288 @@ export default function ChatScreen({ match, onBack }) {
     }
   }
 
+  async function onConfirmPaymentRequest() {
+    if (!userId || sending || !match?.id) return;
+
+    if (!Number.isFinite(hoursToRequest) || hoursToRequest <= 0) {
+      Alert.alert('Heures invalides', 'Indique un nombre d’heures > 0.');
+      return;
+    }
+
+    setSending(true);
+    setError(null);
+    try {
+      const created = await sendPaymentRequest({
+        matchId: match.id,
+        senderId: userId,
+        hours: hoursToRequest,
+        hourlyRate,
+      });
+      setMessages((prev) => appendUnique(prev, created));
+      setPaymentModalVisible(false);
+      setCustomHours('');
+      setSelectedHours(2);
+      scrollToEnd();
+    } catch (err) {
+      setError(err?.message ?? 'Demande de paiement impossible.');
+      Alert.alert('Erreur', err?.message ?? 'Demande impossible.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function onPayRequest(message) {
+    if (!userId || payingId) return;
+
+    if (!tutorClerkId) {
+      Alert.alert(
+        'Tuteur introuvable',
+        'Le wallet tuteur n’est pas lié (clerk_id manquant sur le profil).'
+      );
+      return;
+    }
+
+    setPayingId(message.id);
+    setError(null);
+
+    try {
+      const result = await payPaymentRequest({
+        messageId: message.id,
+        parentClerkId: userId,
+        tutorClerkId: String(tutorClerkId),
+      });
+
+      if (result.message) {
+        setMessages((prev) => upsertMessage(prev, result.message));
+      }
+
+      if (!result.alreadyPaid) {
+        Alert.alert(
+          'Paiement réussi',
+          `${formatMoney(result.amount)} € débités. Nouveau solde : ${formatMoney(result.parentBalance)} €`
+        );
+
+        try {
+          const alreadyReviewed = await hasReviewForMatch(match.id);
+          if (!alreadyReviewed) {
+            setReviewRating(5);
+            setReviewComment('');
+            setReviewModalVisible(true);
+          }
+        } catch {
+          // ignore review check errors
+        }
+      } else {
+        Alert.alert('Paiement réussi', 'Cette demande était déjà payée.');
+      }
+    } catch (err) {
+      if (err?.code === 'INSUFFICIENT_FUNDS') {
+        Alert.alert(
+          'Solde insuffisant',
+          `Il te faut ${formatMoney(err.amount)} € (solde : ${formatMoney(err.balance)} €).\n\nVa dans Mon Profil pour recharger ton wallet via Stripe.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Erreur', err?.message ?? 'Paiement impossible.');
+      }
+    } finally {
+      setPayingId(null);
+    }
+  }
+
+  async function onSubmitReview() {
+    if (!userId || reviewSubmitting || !match?.id || !match?.tutorId) return;
+
+    setReviewSubmitting(true);
+    try {
+      await submitReview({
+        matchId: match.id,
+        reviewerId: userId,
+        tutorId: match.tutorId,
+        rating: reviewRating,
+        comment: reviewComment,
+      });
+      setReviewModalVisible(false);
+      Alert.alert('Merci !', 'Ton avis a bien été enregistré.');
+    } catch (err) {
+      if (err?.code === 'ALREADY_REVIEWED') {
+        setReviewModalVisible(false);
+        Alert.alert('Déjà noté', 'Ce cours a déjà reçu un avis.');
+      } else {
+        Alert.alert('Erreur', err?.message ?? 'Impossible d’envoyer l’avis.');
+      }
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
+
+  async function onCancelRequest(message) {
+    if (!userId || actingId) return;
+
+    Alert.alert(
+      'Annuler la demande',
+      'La demande de paiement sera annulée. Le parent ne pourra plus la payer.',
+      [
+        { text: 'Non', style: 'cancel' },
+        {
+          text: 'Annuler la demande',
+          style: 'destructive',
+          onPress: async () => {
+            setActingId(message.id);
+            try {
+              const updated = await cancelPaymentRequest(message.id, userId);
+              setMessages((prev) => upsertMessage(prev, updated));
+            } catch (err) {
+              Alert.alert('Erreur', err?.message ?? 'Annulation impossible.');
+            } finally {
+              setActingId(null);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function onDispute(message) {
+    if (!userId || actingId) return;
+
+    Alert.alert(
+      'Signaler un problème',
+      'Un litige sera ouvert et les fonds du tuteur seront temporairement gelés le temps qu’un administrateur Clutch vérifie.',
+      [
+        { text: 'Retour', style: 'cancel' },
+        {
+          text: 'Signaler',
+          style: 'destructive',
+          onPress: async () => {
+            setActingId(message.id);
+            try {
+              const result = await disputePayment({
+                messageId: message.id,
+                parentClerkId: userId,
+              });
+              if (result.message) {
+                setMessages((prev) => upsertMessage(prev, result.message));
+              }
+              Alert.alert(
+                'Demande prise en compte',
+                'Ton signalement a bien été reçu par l’équipe Clutch. Les fonds concernés sont gelés le temps de la vérification.'
+              );
+            } catch (err) {
+              Alert.alert('Erreur', err?.message ?? 'Signalement impossible.');
+            } finally {
+              setActingId(null);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  function renderPaymentCard(item) {
+    const isMine = item.senderId === userId;
+    const status = item.paymentStatus;
+    const paid = status === 'paid';
+    const cancelled = status === 'cancelled';
+    const disputed = status === 'disputed';
+    const pending = status === 'pending' || (!status && !paid);
+    const hoursLabel = formatHours(item.hours);
+    const amountLabel = formatMoney(item.amount);
+    const busy = actingId === item.id || payingId === item.id;
+
+    let eyebrow = 'Demande de paiement';
+    let title = `${hoursLabel}h de cours — ${amountLabel} €`;
+    if (paid) {
+      eyebrow = 'Paiement confirmé';
+      title = `Payé ✓ — ${hoursLabel}h · ${amountLabel} €`;
+    } else if (cancelled) {
+      eyebrow = 'Demande annulée';
+      title = `Annulé — ${hoursLabel}h · ${amountLabel} €`;
+    } else if (disputed) {
+      eyebrow = 'Litige en cours';
+      title = `Signalé — ${hoursLabel}h · ${amountLabel} €`;
+    }
+
+    return (
+      <View
+        style={[
+          styles.paymentCard,
+          isMine ? styles.paymentCardMine : styles.paymentCardTheirs,
+          (cancelled || disputed) && styles.paymentCardMuted,
+        ]}
+      >
+        <Text style={styles.paymentEyebrow}>{eyebrow}</Text>
+        <Text style={styles.paymentTitle}>{title}</Text>
+        <Text style={styles.paymentMeta}>
+          Tarif : {formatMoney(item.hourlyRate)} €/h
+        </Text>
+
+        {!isTutor && pending ? (
+          <Pressable
+            style={[styles.payButton, busy && styles.sendDisabled]}
+            onPress={() => onPayRequest(item)}
+            disabled={busy}
+          >
+            {payingId === item.id ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.payButtonLabel}>Valider et Payer</Text>
+            )}
+          </Pressable>
+        ) : null}
+
+        {isTutor && pending ? (
+          <>
+            <Text style={styles.paymentWaiting}>
+              En attente du paiement parent…
+            </Text>
+            <Pressable
+              style={[styles.cancelButton, busy && styles.sendDisabled]}
+              onPress={() => onCancelRequest(item)}
+              disabled={busy}
+            >
+              {actingId === item.id ? (
+                <ActivityIndicator color="#9B1C1C" />
+              ) : (
+                <Text style={styles.cancelButtonLabel}>
+                  Annuler la demande
+                </Text>
+              )}
+            </Pressable>
+          </>
+        ) : null}
+
+        {!isTutor && paid ? (
+          <Pressable
+            style={[styles.disputeButton, busy && styles.sendDisabled]}
+            onPress={() => onDispute(item)}
+            disabled={busy}
+          >
+            {actingId === item.id ? (
+              <ActivityIndicator color="#9B1C1C" />
+            ) : (
+              <Text style={styles.disputeButtonLabel}>
+                Signaler un problème
+              </Text>
+            )}
+          </Pressable>
+        ) : null}
+
+        {disputed ? (
+          <Text style={styles.disputeHint}>
+            Fonds gelés — l’équipe Clutch examine le dossier.
+          </Text>
+        ) : null}
+      </View>
+    );
+  }
+
   function renderMessage({ item }) {
-    const isMine = item.senderRole === 'parent';
+    if (item.messageType === 'payment_request') {
+      return renderPaymentCard(item);
+    }
+
+    const isMine = item.senderId === userId;
     return (
       <View
         style={[
@@ -112,10 +493,11 @@ export default function ChatScreen({ match, onBack }) {
           </Pressable>
           <View style={styles.headerText}>
             <Text style={styles.title} numberOfLines={1}>
-              {tutorName}
+              {title}
             </Text>
             <Text style={styles.subtitle} numberOfLines={1}>
-              {match?.tutor?.subject ?? 'Conversation'}
+              {subtitle}
+              {liveStatus === 'live' ? ' · en direct' : ''}
             </Text>
           </View>
         </View>
@@ -126,10 +508,12 @@ export default function ChatScreen({ match, onBack }) {
           </View>
         ) : (
           <FlatList
+            ref={listRef}
             data={messages}
             keyExtractor={(item) => item.id}
             renderItem={renderMessage}
             contentContainerStyle={styles.list}
+            onContentSizeChange={scrollToEnd}
             ListEmptyComponent={
               <Text style={styles.empty}>
                 Envoie un premier message pour démarrer.
@@ -141,6 +525,17 @@ export default function ChatScreen({ match, onBack }) {
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <View style={styles.composer}>
+          {isTutor ? (
+            <Pressable
+              style={styles.payRequestIcon}
+              onPress={() => setPaymentModalVisible(true)}
+              disabled={sending}
+              accessibilityLabel="Demander le paiement du cours"
+            >
+              <Ionicons name="card-outline" size={22} color="#1B5E3B" />
+            </Pressable>
+          ) : null}
+
           <TextInput
             style={styles.input}
             value={draft}
@@ -148,6 +543,7 @@ export default function ChatScreen({ match, onBack }) {
             placeholder="Écrire un message…"
             placeholderTextColor="#7A9185"
             multiline
+            editable={!sending}
           />
           <Pressable
             style={[
@@ -165,6 +561,157 @@ export default function ChatScreen({ match, onBack }) {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={paymentModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPaymentModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Demander le paiement</Text>
+            <Text style={styles.modalHint}>
+              Tarif : {formatMoney(hourlyRate)} €/h
+            </Text>
+
+            <Text style={styles.modalLabel}>Nombre d’heures</Text>
+            <View style={styles.hoursRow}>
+              {HOUR_PRESETS.map((hours) => {
+                const active =
+                  !customHours && selectedHours === hours;
+                return (
+                  <Pressable
+                    key={hours}
+                    style={[styles.hourChip, active && styles.hourChipActive]}
+                    onPress={() => {
+                      setSelectedHours(hours);
+                      setCustomHours('');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.hourChipLabel,
+                        active && styles.hourChipLabelActive,
+                      ]}
+                    >
+                      {hours}h
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <TextInput
+              style={styles.modalInput}
+              value={customHours}
+              onChangeText={setCustomHours}
+              placeholder="Ou heures personnalisées"
+              placeholderTextColor="#7A9185"
+              keyboardType="decimal-pad"
+            />
+
+            <Text style={styles.modalTotal}>
+              Total : {formatMoney(estimatedTotal)} €
+            </Text>
+
+            <Pressable
+              style={[styles.modalPrimary, sending && styles.sendDisabled]}
+              onPress={onConfirmPaymentRequest}
+              disabled={sending}
+            >
+              {sending ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.payButtonLabel}>
+                  Envoyer la demande
+                </Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={styles.modalCancel}
+              onPress={() => setPaymentModalVisible(false)}
+              disabled={sending}
+            >
+              <Text style={styles.modalCancelLabel}>Annuler</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={reviewModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReviewModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Comment s’est passé votre cours ?</Text>
+            <Text style={styles.modalHint}>
+              Ta note aide les autres parents à choisir un tuteur.
+            </Text>
+
+            <View style={styles.starsRow}>
+              {[1, 2, 3, 4, 5].map((star) => {
+                const active = reviewRating >= star;
+                return (
+                  <Pressable
+                    key={star}
+                    onPress={() => setReviewRating(star)}
+                    hitSlop={8}
+                    disabled={reviewSubmitting}
+                  >
+                    <Text
+                      style={[
+                        styles.star,
+                        active ? styles.starActive : styles.starInactive,
+                      ]}
+                    >
+                      ★
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <TextInput
+              style={[styles.modalInput, styles.reviewComment]}
+              value={reviewComment}
+              onChangeText={setReviewComment}
+              placeholder="Commentaire (optionnel)"
+              placeholderTextColor="#7A9185"
+              multiline
+              textAlignVertical="top"
+              editable={!reviewSubmitting}
+            />
+
+            <Pressable
+              style={[
+                styles.modalPrimary,
+                reviewSubmitting && styles.sendDisabled,
+              ]}
+              onPress={onSubmitReview}
+              disabled={reviewSubmitting}
+            >
+              {reviewSubmitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.payButtonLabel}>Envoyer mon avis</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={styles.modalCancel}
+              onPress={() => setReviewModalVisible(false)}
+              disabled={reviewSubmitting}
+            >
+              <Text style={styles.modalCancelLabel}>Plus tard</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -243,6 +790,93 @@ const styles = StyleSheet.create({
   bubbleTextMine: {
     color: '#FFFFFF',
   },
+  paymentCard: {
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
+    maxWidth: '92%',
+    borderWidth: 2,
+  },
+  paymentCardMine: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#EEF2FF',
+    borderColor: '#4338CA',
+  },
+  paymentCardTheirs: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E8F5EE',
+    borderColor: '#1B5E3B',
+  },
+  paymentCardMuted: {
+    opacity: 0.85,
+  },
+  paymentEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: '#4A6357',
+    marginBottom: 6,
+  },
+  paymentTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#10261C',
+  },
+  paymentMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#4A6357',
+  },
+  paymentWaiting: {
+    marginTop: 10,
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#4338CA',
+  },
+  payButton: {
+    marginTop: 12,
+    backgroundColor: '#1B5E3B',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  payButtonLabel: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  cancelButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  cancelButtonLabel: {
+    color: '#9B1C1C',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  disputeButton: {
+    marginTop: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  disputeButtonLabel: {
+    color: '#9B1C1C',
+    fontSize: 13,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  disputeHint: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#9B1C1C',
+    fontStyle: 'italic',
+  },
   error: {
     color: '#C0392B',
     paddingHorizontal: 16,
@@ -252,12 +886,22 @@ const styles = StyleSheet.create({
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 10,
+    gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: '#E2EAE5',
     backgroundColor: '#FFFFFF',
+  },
+  payRequestIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#1B5E3B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E8F5EE',
   },
   input: {
     flex: 1,
@@ -286,5 +930,108 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 42, 31, 0.45)',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#10261C',
+  },
+  modalHint: {
+    marginTop: 6,
+    marginBottom: 14,
+    fontSize: 14,
+    color: '#4A6357',
+  },
+  modalLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#3D5C4C',
+    marginBottom: 8,
+  },
+  hoursRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  hourChip: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#B7D2C3',
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: '#F8FBF9',
+  },
+  hourChipActive: {
+    backgroundColor: '#1B5E3B',
+    borderColor: '#1B5E3B',
+  },
+  hourChipLabel: {
+    fontWeight: '700',
+    color: '#1B5E3B',
+  },
+  hourChipLabelActive: {
+    color: '#FFFFFF',
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#D7E3DC',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#10261C',
+    marginBottom: 12,
+  },
+  modalTotal: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1B5E3B',
+    marginBottom: 14,
+  },
+  modalPrimary: {
+    backgroundColor: '#1B5E3B',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalCancel: {
+    marginTop: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  modalCancelLabel: {
+    color: '#4A6357',
+    fontWeight: '600',
+  },
+  starsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  star: {
+    fontSize: 36,
+  },
+  starActive: {
+    color: '#E6B800',
+  },
+  starInactive: {
+    color: '#D1D5DB',
+  },
+  reviewComment: {
+    minHeight: 88,
+    marginBottom: 14,
   },
 });

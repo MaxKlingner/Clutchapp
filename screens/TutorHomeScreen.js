@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -8,26 +8,80 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 
+import {
+  ensureTutorProfile,
+  ensureWallet,
+  getTutorWithdrawableBalance,
+} from '../lib/supabase';
 import { openStripeCheckoutTest, stripeConfig } from '../services/stripe';
 
-const INITIAL_EARNINGS = 120;
 const AMOUNT_PRESETS = [20, 50, 100];
 
 export default function TutorHomeScreen() {
   const { userId } = useAuth();
   const { user } = useUser();
-  const [earnings, setEarnings] = useState(INITIAL_EARNINGS);
-  const [withdrawn, setWithdrawn] = useState(40);
+  const [earnings, setEarnings] = useState(0);
+  const [frozen, setFrozen] = useState(0);
+  const [available, setAvailable] = useState(0);
+  const [withdrawn, setWithdrawn] = useState(0);
   const [busy, setBusy] = useState(false);
   const [selectedAmount, setSelectedAmount] = useState(20);
-  const [stats] = useState({
+  const [stats, setStats] = useState({
     coursesDone: 12,
     hoursTaught: 18,
-    rating: 4.8,
+    rating: 0,
+    reviewCount: 0,
     pendingRequests: 3,
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      async function load() {
+        if (!userId) return;
+        try {
+          const [summary, profile] = await Promise.all([
+            getTutorWithdrawableBalance(userId),
+            ensureTutorProfile({
+              clerkId: userId,
+              fullName:
+                user?.fullName ||
+                [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+                null,
+            }),
+          ]);
+          if (!cancelled) {
+            setEarnings(summary.balance);
+            setFrozen(summary.frozen);
+            setAvailable(summary.available);
+            setStats((prev) => ({
+              ...prev,
+              rating: profile.rating || 0,
+              reviewCount: profile.reviewCount || 0,
+            }));
+          }
+        } catch {
+          try {
+            const wallet = await ensureWallet(userId, 0);
+            if (!cancelled) {
+              setEarnings(wallet.balance);
+              setFrozen(0);
+              setAvailable(wallet.balance);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      load();
+      return () => {
+        cancelled = true;
+      };
+    }, [userId, user?.fullName, user?.firstName, user?.lastName])
+  );
 
   const displayName =
     user?.firstName ||
@@ -38,10 +92,12 @@ export default function TutorHomeScreen() {
   async function onWithdraw() {
     if (busy) return;
 
-    if (earnings < selectedAmount) {
+    if (available < selectedAmount) {
       Alert.alert(
-        'Solde insuffisant',
-        `Tu n’as que ${earnings.toFixed(2)} € disponibles.`
+        frozen > 0 ? 'Fonds partiellement gelés' : 'Solde insuffisant',
+        frozen > 0
+          ? `Disponible : ${available.toFixed(2)} €\nGelés (litiges) : ${frozen.toFixed(2)} €\nTotal wallet : ${earnings.toFixed(2)} €`
+          : `Tu n’as que ${available.toFixed(2)} € disponibles.`
       );
       return;
     }
@@ -65,6 +121,7 @@ export default function TutorHomeScreen() {
 
       if (result.paid) {
         setEarnings((prev) => prev - selectedAmount);
+        setAvailable((prev) => prev - selectedAmount);
         setWithdrawn((prev) => prev + selectedAmount);
         Alert.alert(
           'Retrait simulé',
@@ -100,19 +157,27 @@ export default function TutorHomeScreen() {
             <Text style={styles.statLabel}>Enseignées</Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statValue}>{stats.rating.toFixed(1)}</Text>
-            <Text style={styles.statLabel}>Note</Text>
+            <Text style={styles.statValue}>
+              {stats.rating > 0 ? stats.rating.toFixed(1) : '—'}
+            </Text>
+            <Text style={styles.statLabel}>
+              Note{stats.reviewCount > 0 ? ` (${stats.reviewCount})` : ''}
+            </Text>
           </View>
         </View>
 
         <View style={styles.walletCard}>
           <Text style={styles.walletEyebrow}>Portefeuille tuteur</Text>
-          <Text style={styles.balance}>{earnings.toFixed(2)} €</Text>
+          <Text style={styles.balance}>{available.toFixed(2)} €</Text>
           <Text style={styles.walletHint}>
-            Disponible · {withdrawn.toFixed(0)} € déjà retirés (simulé)
+            Disponible au retrait
+            {frozen > 0
+              ? ` · ${frozen.toFixed(2)} € gelés (litiges)`
+              : ''}
+            {withdrawn > 0 ? ` · ${withdrawn.toFixed(0)} € retirés` : ''}
           </Text>
           <Text style={styles.pending}>
-            {stats.pendingRequests} demandes de cours en attente
+            Solde total : {earnings.toFixed(2)} €
           </Text>
 
           <View style={styles.amountRow}>

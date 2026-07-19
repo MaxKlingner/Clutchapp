@@ -44,13 +44,11 @@ export default function SwipeScreen() {
     setActionError(null);
 
     try {
+      // TEMP test messagerie : on inclut son propre profil pour se matcher soi-même
       const profiles = await fetchTutorProfiles({
-        excludeClerkId: userId,
+        excludeClerkId: null,
       });
-      // Filet de sécurité : jamais soi-même dans le deck
-      let available = profiles.filter(
-        (tutor) => !userId || tutor.clerkId !== String(userId)
-      );
+      let available = profiles;
 
       if (userId) {
         const matches = await fetchMatches(userId, {
@@ -281,7 +279,13 @@ export default function SwipeScreen() {
                   .toUpperCase()}
               </Text>
             </View>
-            <Text style={styles.name}>{tutor.name}</Text>
+            <View style={styles.nameRow}>
+              <Text style={styles.name}>{tutor.name}</Text>
+              <Text style={styles.ratingBesideName}>
+                ★ {tutor.rating.toFixed(1)}
+                {tutor.reviewCount > 0 ? ` (${tutor.reviewCount})` : ''}
+              </Text>
+            </View>
             {tutor.studyYear ? (
               <Text style={styles.studyYear}>{tutor.studyYear}</Text>
             ) : null}
@@ -309,7 +313,6 @@ export default function SwipeScreen() {
               <Text style={styles.meta}>
                 {formatRate(tutor.hourlyRate)} €/h
               </Text>
-              <Text style={styles.meta}>★ {tutor.rating.toFixed(1)}</Text>
             </View>
             <Text style={styles.counter}>
               {index + 1} / {tutors.length}
@@ -484,6 +487,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#10261C',
     textAlign: 'center',
+    flexShrink: 1,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 4,
+  },
+  ratingBesideName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1B5E3B',
   },
   studyYear: {
     marginTop: 4,

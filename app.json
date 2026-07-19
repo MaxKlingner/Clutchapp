@@ -9,10 +9,13 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.clutch.app"
+      "bundleIdentifier": "com.maxklingner.clutch",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "package": "com.clutch.app",
+      "package": "com.maxklingner.clutch",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -24,7 +27,21 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      "expo-dev-client",
+      [
+        "expo-notifications",
+        {
+          "color": "#1B5E3B",
+          "defaultChannel": "default"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4fd6a13e-183f-440b-89b9-21579c91faed"
+      }
+    },
+    "owner": "maxklingner"
   }
 }
