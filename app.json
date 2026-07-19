@@ -1,15 +1,18 @@
 {
   "expo": {
-    "name": "CLUTCH_APP",
-    "slug": "CLUTCH_APP",
+    "name": "CLUTCH",
+    "slug": "clutch",
+    "scheme": "clutch",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.clutch.app"
     },
     "android": {
+      "package": "com.clutch.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

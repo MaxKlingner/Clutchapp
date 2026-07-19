@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -12,15 +12,19 @@ import MessagesScreen from './screens/MessagesScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
+import OnboardingScreen from './screens/OnboardingScreen';
+import TutorHomeScreen from './screens/TutorHomeScreen';
 import {
   clerkPublishableKey,
   isClerkConfigured,
   tokenCache,
 } from './lib/clerk';
+import { RoleProvider, useRole } from './lib/RoleContext';
+import { ROLES } from './lib/roles';
 
 const Tab = createBottomTabNavigator();
 
-function MainTabs() {
+function ParentTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -67,6 +71,53 @@ function MainTabs() {
   );
 }
 
+function TutorTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarActiveTintColor: '#4338CA',
+        tabBarInactiveTintColor: '#7A9185',
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#E2EAE5',
+          paddingTop: 4,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '600',
+        },
+        tabBarIcon: ({ color, size }) => {
+          const icons = {
+            TutorHome: 'school',
+            Messages: 'chatbubbles',
+            Profile: 'wallet',
+          };
+          return (
+            <Ionicons name={icons[route.name]} size={size} color={color} />
+          );
+        },
+      })}
+    >
+      <Tab.Screen
+        name="TutorHome"
+        component={TutorHomeScreen}
+        options={{ title: 'Accueil' }}
+      />
+      <Tab.Screen
+        name="Messages"
+        component={MessagesScreen}
+        options={{ title: 'Demandes' }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{ title: 'Mon Profil' }}
+      />
+    </Tab.Navigator>
+  );
+}
+
 function AuthNavigator() {
   const [mode, setMode] = useState('signIn');
 
@@ -75,6 +126,38 @@ function AuthNavigator() {
   }
 
   return <SignInScreen onGoToSignUp={() => setMode('signUp')} />;
+}
+
+function RoleGate() {
+  const { userId } = useAuth();
+  const { role, loading, error, loadRole, setRoleSelected } = useRole();
+
+  useEffect(() => {
+    loadRole(userId);
+  }, [userId, loadRole]);
+
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color="#1B5E3B" />
+      </View>
+    );
+  }
+
+  if (!role) {
+    return (
+      <OnboardingScreen
+        onRoleSelected={setRoleSelected}
+        loadError={error}
+      />
+    );
+  }
+
+  if (role === ROLES.TUTOR) {
+    return <TutorTabs />;
+  }
+
+  return <ParentTabs />;
 }
 
 function RootNavigator() {
@@ -88,16 +171,18 @@ function RootNavigator() {
     );
   }
 
-  return isSignedIn ? <MainTabs /> : <AuthNavigator />;
+  return isSignedIn ? <RoleGate /> : <AuthNavigator />;
 }
 
 function AppContent() {
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar style="dark" />
-        <RootNavigator />
-      </NavigationContainer>
+      <RoleProvider>
+        <NavigationContainer>
+          <StatusBar style="dark" />
+          <RootNavigator />
+        </NavigationContainer>
+      </RoleProvider>
     </SafeAreaProvider>
   );
 }
