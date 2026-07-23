@@ -1,0 +1,6 @@
+# Minimal Supabase config for Edge Functions deploy.
+# Project ref comes from `supabase link` / CLI flags.
+
+[functions.stripe]
+# Checkout session creation uses Stripe secret server-side; app sends anon key.
+verify_jwt = false

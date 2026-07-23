@@ -130,9 +130,17 @@ export default function ProfileScreen() {
 
     setBusy(true);
     try {
+      console.log('[wallet] recharge start', {
+        topUpAmount,
+        userId,
+        stripeReady: stripeConfig.ready,
+        backendUrl: stripeConfig.backendUrl,
+        privateBackend: stripeConfig.usesPrivateBackend,
+      });
+
       if (!stripeConfig.ready) {
         throw new Error(
-          'Stripe pas prêt. Vérifie EXPO_PUBLIC_STRIPE_* et lance npm run stripe:server.'
+          'Stripe pas prêt. Vérifie EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY et EXPO_PUBLIC_STRIPE_BACKEND_URL dans les secrets EAS (preview/production).'
         );
       }
 
@@ -156,6 +164,7 @@ export default function ProfileScreen() {
         );
       }
     } catch (err) {
+      console.error('[wallet] recharge failed', err);
       Alert.alert('Erreur Stripe', err?.message ?? 'Recharge impossible.');
     } finally {
       setBusy(false);

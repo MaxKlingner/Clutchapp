@@ -65,19 +65,25 @@ cp .env.example .env
 | `SUPABASE_ACCESS_TOKEN` | Token Management API (scripts SQL) |
 | `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable (test) |
 | `STRIPE_SECRET_KEY` | Stripe secret (**serveur uniquement**) |
-| `EXPO_PUBLIC_STRIPE_BACKEND_URL` | URL du serveur Stripe (ex. `http://192.168.x.x:4242` depuis le téléphone) |
+| `EXPO_PUBLIC_STRIPE_BACKEND_URL` | Backend Stripe HTTPS (Edge Function) ; en local seulement `http://127.0.0.1:4242` |
 
 > Ne committe jamais `.env`. Les schémas SQL sont dans `supabase/` et s’appliquent via les scripts `scripts/apply-*.mjs`.
 
-### 3. Lancer le serveur Stripe (test)
+### 3. Backend Stripe
 
-Dans un terminal :
+**Local (dev) :**
 
 ```bash
 npm run stripe:server
+# EXPO_PUBLIC_STRIPE_BACKEND_URL=http://127.0.0.1:4242
 ```
 
-Le serveur écoute sur le port **4242**.
+**TestFlight / store :** le téléphone ne peut pas joindre `localhost` / `192.168.x.x`. Utilise l’Edge Function :
+
+1. Secrets Supabase : `STRIPE_SECRET_KEY`, `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+2. Deploy : `npx supabase functions deploy stripe --project-ref <ref>`
+3. EAS env `preview` / `production` :
+   `EXPO_PUBLIC_STRIPE_BACKEND_URL=https://<ref>.supabase.co/functions/v1/stripe`
 
 ### 4. Lancer Expo
 

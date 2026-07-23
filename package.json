@@ -31,6 +31,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "stripe:server": "node server/stripe-server.mjs",
+    "stripe:deploy": "node scripts/deploy-stripe-function.mjs",
     "eas:configure": "eas build:configure",
     "build:dev:ios": "eas build --profile development --platform ios",
     "build:dev:android": "eas build --profile development --platform android",
