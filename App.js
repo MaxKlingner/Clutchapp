@@ -43,7 +43,7 @@ function ParentTabs() {
         },
         tabBarIcon: ({ color, size }) => {
           const icons = {
-            Swipe: 'heart',
+            Swipe: 'checkmark',
             Messages: 'chatbubbles',
             Profile: 'person',
           };

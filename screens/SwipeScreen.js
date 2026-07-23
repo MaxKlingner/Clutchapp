@@ -338,12 +338,12 @@ export default function SwipeScreen() {
               style={[styles.actionButton, styles.likeButton]}
               onPress={() => goNext('like')}
               disabled={matching}
-              accessibilityLabel="Aimer"
+              accessibilityLabel="Valider"
             >
               {matching ? (
                 <ActivityIndicator color="#2F9E6B" />
               ) : (
-                <Text style={styles.likeIcon}>♥</Text>
+                <Text style={styles.likeIcon}>✓</Text>
               )}
             </Pressable>
           </View>
@@ -593,8 +593,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   likeIcon: {
-    fontSize: 30,
+    fontSize: 32,
     color: '#2F9E6B',
+    fontWeight: '700',
   },
   emptyCard: {
     width: '100%',
