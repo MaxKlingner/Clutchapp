@@ -3,12 +3,14 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 
 import SwipeScreen from './screens/SwipeScreen';
 import MessagesScreen from './screens/MessagesScreen';
+import WalletScreen from './screens/WalletScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
@@ -24,8 +26,9 @@ import { ROLES } from './lib/roles';
 import { setupPushNotificationsForUser } from './services/notifications';
 
 const Tab = createBottomTabNavigator();
+const Stack = createNativeStackNavigator();
 
-function ParentTabs() {
+function ParentMainTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -43,9 +46,9 @@ function ParentTabs() {
         },
         tabBarIcon: ({ color, size }) => {
           const icons = {
-            Swipe: 'checkmark',
+            Matchs: 'book',
             Messages: 'chatbubbles',
-            Profile: 'person',
+            Wallet: 'wallet',
           };
           return (
             <Ionicons name={icons[route.name]} size={size} color={color} />
@@ -54,9 +57,9 @@ function ParentTabs() {
       })}
     >
       <Tab.Screen
-        name="Swipe"
+        name="Matchs"
         component={SwipeScreen}
-        options={{ title: 'Swipe' }}
+        options={{ title: 'Découvrir' }}
       />
       <Tab.Screen
         name="Messages"
@@ -64,15 +67,15 @@ function ParentTabs() {
         options={{ title: 'Messages' }}
       />
       <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ title: 'Mon Profil' }}
+        name="Wallet"
+        component={WalletScreen}
+        options={{ title: 'Portefeuille' }}
       />
     </Tab.Navigator>
   );
 }
 
-function TutorTabs() {
+function TutorMainTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -92,7 +95,7 @@ function TutorTabs() {
           const icons = {
             TutorHome: 'school',
             Messages: 'chatbubbles',
-            Profile: 'wallet',
+            Wallet: 'wallet',
           };
           return (
             <Ionicons name={icons[route.name]} size={size} color={color} />
@@ -111,11 +114,37 @@ function TutorTabs() {
         options={{ title: 'Demandes' }}
       />
       <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ title: 'Mon Profil' }}
+        name="Wallet"
+        component={WalletScreen}
+        options={{ title: 'Portefeuille' }}
       />
     </Tab.Navigator>
+  );
+}
+
+function ParentTabs() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="MainTabs" component={ParentMainTabs} />
+      <Stack.Screen
+        name="Settings"
+        component={ProfileScreen}
+        options={{ presentation: 'modal' }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+function TutorTabs() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="MainTabs" component={TutorMainTabs} />
+      <Stack.Screen
+        name="Settings"
+        component={ProfileScreen}
+        options={{ presentation: 'modal' }}
+      />
+    </Stack.Navigator>
   );
 }
 

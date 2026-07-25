@@ -18,7 +18,10 @@ import { useAuth } from '@clerk/clerk-expo';
 
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
+import { MATCH_STATUS } from '../lib/tutorConstants';
 import {
+  acceptMatchRequest,
+  declineMatchRequest,
   fetchMessages,
   cancelPaymentRequest,
   disputePayment,
@@ -59,7 +62,12 @@ function formatMoney(amount) {
   return value.toFixed(2);
 }
 
-export default function ChatScreen({ match, onBack }) {
+export default function ChatScreen({
+  match,
+  onBack,
+  onMatchUpdated,
+  onDeclined,
+}) {
   const { userId } = useAuth();
   const { role } = useRole();
   const listRef = useRef(null);
@@ -69,8 +77,12 @@ export default function ChatScreen({ match, onBack }) {
   const [sending, setSending] = useState(false);
   const [payingId, setPayingId] = useState(null);
   const [actingId, setActingId] = useState(null);
+  const [matchActing, setMatchActing] = useState(false);
   const [error, setError] = useState(null);
   const [liveStatus, setLiveStatus] = useState('connecting');
+  const [matchStatus, setMatchStatus] = useState(
+    match?.status || MATCH_STATUS.PENDING
+  );
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [selectedHours, setSelectedHours] = useState(2);
   const [customHours, setCustomHours] = useState('');
@@ -80,15 +92,25 @@ export default function ChatScreen({ match, onBack }) {
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
   const isTutor = role === ROLES.TUTOR;
+  const isPending = matchStatus === MATCH_STATUS.PENDING;
+  const tutorCanWrite = isTutor ? !isPending : true;
   const senderRole = isTutor ? 'tutor' : 'parent';
   const title = isTutor
     ? match?.parentName || 'Parent'
     : match?.tutor?.name || 'Tuteur';
   const subtitle = isTutor
-    ? 'Conversation avec le parent'
-    : match?.tutor?.subject || 'Conversation';
+    ? isPending
+      ? 'Demande en attente de ta réponse'
+      : 'Conversation avec le parent'
+    : isPending
+      ? 'Demande envoyée — en attente du tuteur'
+      : match?.tutor?.subject || 'Conversation';
   const hourlyRate = Number(match?.tutor?.hourlyRate) || 25;
   const tutorClerkId = match?.tutor?.clerkId || null;
+
+  useEffect(() => {
+    setMatchStatus(match?.status || MATCH_STATUS.PENDING);
+  }, [match?.id, match?.status]);
 
   const hoursToRequest = (() => {
     const custom = Number(String(customHours).replace(',', '.'));
@@ -161,6 +183,7 @@ export default function ChatScreen({ match, onBack }) {
 
   async function onSend() {
     if (!userId || sending || !draft.trim() || !match?.id) return;
+    if (isTutor && isPending) return;
 
     const content = draft.trim();
     setDraft('');
@@ -182,6 +205,52 @@ export default function ChatScreen({ match, onBack }) {
     } finally {
       setSending(false);
     }
+  }
+
+  async function onAcceptMatch() {
+    if (!userId || matchActing || !match?.id) return;
+    setMatchActing(true);
+    setError(null);
+    try {
+      const updated = await acceptMatchRequest(match.id, userId);
+      setMatchStatus(MATCH_STATUS.ACCEPTED);
+      onMatchUpdated?.(updated);
+      const rows = await fetchMessages(match.id);
+      setMessages(rows);
+      scrollToEnd();
+    } catch (err) {
+      setError(err?.message ?? 'Acceptation impossible.');
+      Alert.alert('Erreur', err?.message ?? 'Acceptation impossible.');
+    } finally {
+      setMatchActing(false);
+    }
+  }
+
+  async function onDeclineMatch() {
+    if (!userId || matchActing || !match?.id) return;
+
+    Alert.alert(
+      'Décliner la demande',
+      'La conversation sera archivée et retirée de tes demandes.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Décliner',
+          style: 'destructive',
+          onPress: async () => {
+            setMatchActing(true);
+            try {
+              await declineMatchRequest(match.id);
+              onDeclined?.();
+            } catch (err) {
+              Alert.alert('Erreur', err?.message ?? 'Refus impossible.');
+            } finally {
+              setMatchActing(false);
+            }
+          },
+        },
+      ]
+    );
   }
 
   async function onConfirmPaymentRequest() {
@@ -262,7 +331,7 @@ export default function ChatScreen({ match, onBack }) {
       if (err?.code === 'INSUFFICIENT_FUNDS') {
         Alert.alert(
           'Solde insuffisant',
-          `Il te faut ${formatMoney(err.amount)} € (solde : ${formatMoney(err.balance)} €).\n\nVa dans Mon Profil pour recharger ton wallet via Stripe.`,
+          `Il te faut ${formatMoney(err.amount)} € (solde : ${formatMoney(err.balance)} €).\n\nVa dans Portefeuille pour recharger ton wallet via Stripe.`,
           [{ text: 'OK' }]
         );
       } else {
@@ -502,6 +571,53 @@ export default function ChatScreen({ match, onBack }) {
           </View>
         </View>
 
+        {isTutor && isPending ? (
+          <View style={styles.requestBanner}>
+            <Text style={styles.requestBannerTitle}>Nouvelle demande</Text>
+            <Text style={styles.requestBannerText}>
+              Accepte pour pouvoir répondre librement. Si tu déclines, la
+              conversation est archivée.
+            </Text>
+            <View style={styles.requestBannerActions}>
+              <Pressable
+                style={[
+                  styles.requestAcceptBtn,
+                  matchActing && styles.sendDisabled,
+                ]}
+                onPress={onAcceptMatch}
+                disabled={matchActing}
+              >
+                {matchActing ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.requestAcceptLabel}>
+                    Accepter la demande
+                  </Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.requestDeclineBtn,
+                  matchActing && styles.sendDisabled,
+                ]}
+                onPress={onDeclineMatch}
+                disabled={matchActing}
+              >
+                <Text style={styles.requestDeclineLabel}>Décliner</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {!isTutor && isPending ? (
+          <View style={styles.pendingParentBanner}>
+            <Text style={styles.pendingParentText}>
+              En attente de la réponse du tuteur. Tu peux encore envoyer des
+              messages.
+            </Text>
+          </View>
+        ) : null}
+
         {loading ? (
           <View style={styles.centered}>
             <ActivityIndicator size="large" color="#1B5E3B" />
@@ -525,7 +641,7 @@ export default function ChatScreen({ match, onBack }) {
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <View style={styles.composer}>
-          {isTutor ? (
+          {isTutor && tutorCanWrite ? (
             <Pressable
               style={styles.payRequestIcon}
               onPress={() => setPaymentModalVisible(true)}
@@ -537,21 +653,26 @@ export default function ChatScreen({ match, onBack }) {
           ) : null}
 
           <TextInput
-            style={styles.input}
+            style={[styles.input, !tutorCanWrite && styles.inputDisabled]}
             value={draft}
             onChangeText={setDraft}
-            placeholder="Écrire un message…"
+            placeholder={
+              isTutor && isPending
+                ? 'Accepte la demande pour répondre…'
+                : 'Écrire un message…'
+            }
             placeholderTextColor="#7A9185"
             multiline
-            editable={!sending}
+            editable={!sending && tutorCanWrite}
           />
           <Pressable
             style={[
               styles.sendButton,
-              (!draft.trim() || sending) && styles.sendDisabled,
+              (!draft.trim() || sending || !tutorCanWrite) &&
+                styles.sendDisabled,
             ]}
             onPress={onSend}
-            disabled={!draft.trim() || sending}
+            disabled={!draft.trim() || sending || !tutorCanWrite}
           >
             {sending ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -748,6 +869,75 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#4A6357',
+  },
+  requestBanner: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  requestBannerTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#312E81',
+  },
+  requestBannerText: {
+    marginTop: 4,
+    marginBottom: 12,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#4338CA',
+  },
+  requestBannerActions: {
+    gap: 8,
+  },
+  requestAcceptBtn: {
+    backgroundColor: '#1B5E3B',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  requestAcceptLabel: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  requestDeclineBtn: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  requestDeclineLabel: {
+    color: '#6B7280',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  pendingParentBanner: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    backgroundColor: '#FFF8E8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#F0E0B2',
+  },
+  pendingParentText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#7A4E00',
+  },
+  inputDisabled: {
+    backgroundColor: '#EEF1EF',
+    color: '#7A9185',
   },
   centered: {
     flex: 1,

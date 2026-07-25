@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 
 import { useRole } from '../lib/RoleContext';
@@ -17,6 +17,7 @@ import { MATCH_STATUS } from '../lib/tutorConstants';
 import {
   acceptMatchRequest,
   declineMatchRequest,
+  fetchMatchById,
   fetchMatches,
   fetchTutorMatchRequests,
 } from '../lib/supabase';
@@ -25,6 +26,8 @@ import ChatScreen from './ChatScreen';
 export default function MessagesScreen() {
   const { userId } = useAuth();
   const { role } = useRole();
+  const navigation = useNavigation();
+  const route = useRoute();
   const isTutor = role === ROLES.TUTOR;
 
   const [matches, setMatches] = useState([]);
@@ -37,7 +40,7 @@ export default function MessagesScreen() {
     if (!userId) {
       setMatches([]);
       setLoading(false);
-      return;
+      return [];
     }
 
     setError(null);
@@ -48,9 +51,11 @@ export default function MessagesScreen() {
             statuses: [MATCH_STATUS.ACCEPTED, MATCH_STATUS.PENDING],
           });
       setMatches(rows);
+      return rows;
     } catch (err) {
       setError(err?.message ?? 'Erreur de chargement.');
       setMatches([]);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -58,17 +63,45 @@ export default function MessagesScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
-      loadMatches();
-    }, [userId, isTutor])
+      let cancelled = false;
+
+      async function boot() {
+        setLoading(true);
+        const rows = await loadMatches();
+        if (cancelled) return;
+
+        const openMatchId = route.params?.openMatchId;
+        if (!openMatchId) return;
+
+        const fromList = rows.find((item) => item.id === openMatchId);
+        try {
+          const match = fromList || (await fetchMatchById(openMatchId));
+          if (!cancelled && match) {
+            setSelectedMatch(match);
+          }
+        } catch (err) {
+          if (!cancelled) {
+            setError(err?.message ?? 'Conversation introuvable.');
+          }
+        } finally {
+          navigation.setParams({ openMatchId: undefined });
+        }
+      }
+
+      boot();
+      return () => {
+        cancelled = true;
+      };
+    }, [userId, isTutor, route.params?.openMatchId])
   );
 
   async function onAccept(match) {
     if (actingId) return;
     setActingId(match.id);
     try {
-      await acceptMatchRequest(match.id, userId);
+      const updated = await acceptMatchRequest(match.id, userId);
       await loadMatches();
+      setSelectedMatch(updated);
     } catch (err) {
       setError(err?.message ?? 'Acceptation impossible.');
     } finally {
@@ -81,6 +114,7 @@ export default function MessagesScreen() {
     setActingId(match.id);
     try {
       await declineMatchRequest(match.id);
+      setSelectedMatch(null);
       await loadMatches();
     } catch (err) {
       setError(err?.message ?? 'Refus impossible.');
@@ -94,6 +128,14 @@ export default function MessagesScreen() {
       <ChatScreen
         match={selectedMatch}
         onBack={() => {
+          setSelectedMatch(null);
+          loadMatches();
+        }}
+        onMatchUpdated={(updated) => {
+          setSelectedMatch(updated);
+          loadMatches();
+        }}
+        onDeclined={() => {
           setSelectedMatch(null);
           loadMatches();
         }}
@@ -112,13 +154,7 @@ export default function MessagesScreen() {
       .toUpperCase();
 
     return (
-      <Pressable
-        style={styles.row}
-        onPress={() => {
-          if (!pending) setSelectedMatch(item);
-        }}
-        disabled={pending}
-      >
+      <Pressable style={styles.row} onPress={() => setSelectedMatch(item)}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials}</Text>
         </View>
@@ -126,7 +162,7 @@ export default function MessagesScreen() {
           <Text style={styles.rowTitle}>{item.tutor?.name ?? 'Tuteur'}</Text>
           <Text style={styles.rowSubtitle}>
             {pending
-              ? 'Demande envoyée — en attente du tuteur'
+              ? 'Demande envoyée — en attente du tuteur · Appuyer pour ouvrir'
               : `${item.tutor?.subject ?? 'Match'} · Appuyer pour discuter`}
           </Text>
         </View>
@@ -148,7 +184,10 @@ export default function MessagesScreen() {
 
     return (
       <View style={styles.requestCard}>
-        <View style={styles.requestHeader}>
+        <Pressable
+          style={styles.requestHeader}
+          onPress={() => setSelectedMatch(item)}
+        >
           <View style={[styles.avatar, styles.tutorAvatar]}>
             <Text style={[styles.avatarText, styles.tutorAvatarText]}>
               {initials}
@@ -158,11 +197,11 @@ export default function MessagesScreen() {
             <Text style={styles.rowTitle}>{name}</Text>
             <Text style={styles.rowSubtitle}>
               {pending
-                ? 'A swipé à droite — veut un cours avec toi'
+                ? 'Nouvelle demande — ouvrir pour répondre'
                 : 'Cours accepté · Appuyer pour discuter'}
             </Text>
           </View>
-        </View>
+        </Pressable>
 
         {pending ? (
           <View style={styles.actions}>
@@ -174,7 +213,7 @@ export default function MessagesScreen() {
               {busy ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.actionLabel}>Accepter le cours</Text>
+                <Text style={styles.actionLabel}>Accepter la demande</Text>
               )}
             </Pressable>
             <Pressable
@@ -205,8 +244,8 @@ export default function MessagesScreen() {
         </Text>
         <Text style={styles.subtitle}>
           {isTutor
-            ? 'Parents qui ont swipé à droite sur ton profil.'
-            : 'Tes matches apparaissent ici après un swipe à droite.'}
+            ? 'Parents qui t’ont envoyé une demande de cours.'
+            : 'Tes conversations avec les tuteurs.'}
         </Text>
 
         {loading ? (
@@ -231,8 +270,8 @@ export default function MessagesScreen() {
             ListEmptyComponent={
               <Text style={styles.emptyText}>
                 {isTutor
-                  ? 'Aucune demande pour l’instant. Complète ton profil pour apparaître dans le swipe.'
-                  : 'Aucun match pour l’instant. Swipe à droite sur un tuteur pour démarrer une demande.'}
+                  ? 'Aucune demande pour l’instant. Complète ton profil pour apparaître dans Découvrir.'
+                  : 'Aucune conversation. Envoie un message depuis Découvrir pour démarrer.'}
               </Text>
             }
           />

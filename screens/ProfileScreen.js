@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -6,68 +6,28 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
+import { Ionicons } from '@expo/vector-icons';
 
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
-import {
-  creditWallet,
-  ensureTutorProfile,
-  ensureWallet,
-  fetchMatches,
-} from '../lib/supabase';
-import { openStripeCheckoutTest, stripeConfig } from '../services/stripe';
+import { ensureTutorProfile, resetMatchesAndMessages } from '../lib/supabase';
 import TutorProfileEditor from './TutorProfileEditor';
 
-const AMOUNT_PRESETS = [20, 50, 100];
-const LESSON_AMOUNT = 20;
-
 export default function ProfileScreen() {
+  const navigation = useNavigation();
   const { signOut, userId } = useAuth();
   const { user } = useUser();
   const { role, switching, switchRole } = useRole();
   const [signingOut, setSigningOut] = useState(false);
-  const [balance, setBalance] = useState(0);
-  const [walletLoading, setWalletLoading] = useState(true);
-  const [tutorEarnings, setTutorEarnings] = useState({});
-  const [busy, setBusy] = useState(false);
-  const [selectedAmount, setSelectedAmount] = useState(20);
-  const [customAmount, setCustomAmount] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   const isParent = role !== ROLES.TUTOR;
-
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      async function loadWallet() {
-        if (!userId) return;
-        setWalletLoading(true);
-        try {
-          const wallet = await ensureWallet(userId, 50);
-          if (!cancelled) setBalance(wallet.balance);
-        } catch {
-          // ignore
-        } finally {
-          if (!cancelled) setWalletLoading(false);
-        }
-      }
-      loadWallet();
-      return () => {
-        cancelled = true;
-      };
-    }, [userId])
-  );
-
-  const topUpAmount = (() => {
-    const custom = Number(String(customAmount).replace(',', '.'));
-    if (Number.isFinite(custom) && custom >= 1) return Math.round(custom);
-    return selectedAmount;
-  })();
+  const canClose = navigation.canGoBack();
 
   async function onSignOut() {
     if (signingOut) return;
@@ -80,7 +40,7 @@ export default function ProfileScreen() {
   }
 
   async function onSwitchRole() {
-    if (!userId || switching || busy || signingOut) return;
+    if (!userId || switching || signingOut) return;
 
     const nextRole = isParent ? ROLES.TUTOR : ROLES.PARENT;
     const label =
@@ -120,104 +80,37 @@ export default function ProfileScreen() {
     );
   }
 
-  async function onRecharge() {
-    if (busy) return;
+  async function onResetMatches() {
+    if (resetting) return;
 
-    if (!Number.isFinite(topUpAmount) || topUpAmount < 1) {
-      Alert.alert('Montant invalide', 'Choisis un montant d’au moins 1 €.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      console.log('[wallet] recharge start', {
-        topUpAmount,
-        userId,
-        stripeReady: stripeConfig.ready,
-        backendUrl: stripeConfig.backendUrl,
-        privateBackend: stripeConfig.usesPrivateBackend,
-      });
-
-      if (!stripeConfig.ready) {
-        throw new Error(
-          'Stripe pas prêt. Vérifie EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY et EXPO_PUBLIC_STRIPE_BACKEND_URL dans les secrets EAS (preview/production).'
-        );
-      }
-
-      const result = await openStripeCheckoutTest({
-        amountCents: topUpAmount * 100,
-        currency: 'eur',
-        parentId: userId ?? 'anonymous',
-      });
-
-      if (result.paid) {
-        const wallet = await creditWallet(userId, topUpAmount);
-        setBalance(wallet.balance);
-        Alert.alert(
-          'Paiement Stripe réussi',
-          `+${topUpAmount} € crédités.\nNouveau solde : ${wallet.balance.toFixed(2)} €`
-        );
-      } else {
-        Alert.alert(
-          'Paiement non confirmé',
-          'La session Checkout n’est pas payée (annulé ou incomplet).'
-        );
-      }
-    } catch (err) {
-      console.error('[wallet] recharge failed', err);
-      Alert.alert('Erreur Stripe', err?.message ?? 'Recharge impossible.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onSimulateLessonPayment() {
-    if (busy) return;
-
-    if (balance < LESSON_AMOUNT) {
-      Alert.alert(
-        'Solde insuffisant',
-        `Il te faut au moins ${LESSON_AMOUNT} €.`
-      );
-      return;
-    }
-
-    if (!userId) {
-      Alert.alert('Erreur', 'Tu dois être connecté.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const matches = await fetchMatches(userId);
-      if (!matches.length) {
-        Alert.alert(
-          'Aucun tuteur matché',
-          'Match un tuteur dans Swipe avant de simuler un paiement.'
-        );
-        return;
-      }
-
-      const match = matches[0];
-      const tutorName = match.tutor?.name ?? 'Tuteur';
-      const tutorId = match.tutorId;
-      const nextTutorBalance = (tutorEarnings[tutorId] ?? 0) + LESSON_AMOUNT;
-
-      setBalance((prev) => prev - LESSON_AMOUNT);
-      setTutorEarnings((prev) => ({
-        ...prev,
-        [tutorId]: nextTutorBalance,
-      }));
-
-      Alert.alert(
-        'Cours terminé — paiement OK',
-        `${LESSON_AMOUNT} € transférés vers ${tutorName}.\nSolde tuteur : ${nextTutorBalance} €`
-      );
-    } catch (err) {
-      Alert.alert('Erreur', err?.message ?? 'Paiement simulé impossible.');
-    } finally {
-      setBusy(false);
-    }
+    Alert.alert(
+      'Reset de test',
+      'Supprimer tous les matches et messages ? Cette action est irréversible.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Réinitialiser',
+          style: 'destructive',
+          onPress: async () => {
+            setResetting(true);
+            try {
+              await resetMatchesAndMessages();
+              Alert.alert(
+                'Reset OK',
+                'Matches et messages ont été réinitialisés.'
+              );
+            } catch (err) {
+              Alert.alert(
+                'Erreur',
+                err?.message ?? 'Reset impossible.'
+              );
+            } finally {
+              setResetting(false);
+            }
+          },
+        },
+      ]
+    );
   }
 
   return (
@@ -227,96 +120,23 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
-        {isParent ? (
-          <View style={styles.walletCard}>
-            <Text style={styles.walletEyebrow}>Mon Portefeuille</Text>
-            {walletLoading ? (
-              <ActivityIndicator color="#1B5E3B" style={{ marginVertical: 16 }} />
-            ) : (
-              <Text style={styles.balance}>{balance.toFixed(2)} €</Text>
-            )}
-            <Text style={styles.walletHint}>
-              Recharge via Stripe Checkout (mode test — aucun vrai débit)
-            </Text>
-
-            <Text style={styles.amountLabel}>Montant à recharger</Text>
-            <View style={styles.amountRow}>
-              {AMOUNT_PRESETS.map((amount) => {
-                const active = !customAmount && selectedAmount === amount;
-                return (
-                  <Pressable
-                    key={amount}
-                    style={[styles.chip, active && styles.chipActive]}
-                    onPress={() => {
-                      setSelectedAmount(amount);
-                      setCustomAmount('');
-                    }}
-                    disabled={busy}
-                  >
-                    <Text
-                      style={[
-                        styles.chipLabel,
-                        active && styles.chipLabelActive,
-                      ]}
-                    >
-                      {amount} €
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <TextInput
-              style={styles.amountInput}
-              value={customAmount}
-              onChangeText={setCustomAmount}
-              placeholder="Ou montant personnalisé (€)"
-              placeholderTextColor="#7A9185"
-              keyboardType="decimal-pad"
-              editable={!busy}
-            />
-
+        {canClose ? (
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalHeaderTitle}>Réglages</Text>
             <Pressable
-              style={[
-                styles.button,
-                styles.topUpButton,
-                busy && styles.buttonDisabled,
-              ]}
-              onPress={onRecharge}
-              disabled={busy}
+              style={styles.closeIconButton}
+              onPress={() => navigation.goBack()}
+              accessibilityLabel="Fermer les réglages"
+              hitSlop={8}
             >
-              {busy ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.buttonLabel}>
-                  Recharger {topUpAmount} €
-                </Text>
-              )}
-            </Pressable>
-
-            <Pressable
-              style={[
-                styles.button,
-                styles.lessonButton,
-                busy && styles.buttonDisabled,
-              ]}
-              onPress={onSimulateLessonPayment}
-              disabled={busy}
-            >
-              {busy ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.buttonLabel}>
-                  [TEST] Fin de cours (−{LESSON_AMOUNT} €)
-                </Text>
-              )}
+              <Ionicons name="close" size={24} color="#1B5E3B" />
             </Pressable>
           </View>
-        ) : (
-          <TutorProfileEditor />
-        )}
+        ) : null}
 
-        <Text style={styles.title}>Mon Profil</Text>
+        {!isParent ? <TutorProfileEditor /> : null}
+
+        {canClose ? null : <Text style={styles.title}>Réglages</Text>}
         <Text style={styles.roleBadge}>
           {role === ROLES.TUTOR ? 'Rôle : Tuteur' : 'Rôle : Parent'}
         </Text>
@@ -339,9 +159,7 @@ export default function ProfileScreen() {
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={styles.buttonLabel}>
-              {isParent
-                ? 'Passer côté tuteur'
-                : 'Revenir côté parent'}
+              {isParent ? 'Passer côté tuteur' : 'Revenir côté parent'}
             </Text>
           )}
         </Pressable>
@@ -361,6 +179,29 @@ export default function ProfileScreen() {
             <Text style={styles.buttonLabel}>Se déconnecter</Text>
           )}
         </Pressable>
+
+        <View style={styles.devSection}>
+          <Text style={styles.devTitle}>Tests / développement</Text>
+          <Text style={styles.devHint}>
+            Outils internes — ne pas utiliser en production.
+          </Text>
+          <Pressable
+            style={[
+              styles.resetTestButton,
+              resetting && styles.buttonDisabled,
+            ]}
+            onPress={onResetMatches}
+            disabled={resetting || signingOut}
+          >
+            {resetting ? (
+              <ActivityIndicator color="#7A4E00" />
+            ) : (
+              <Text style={styles.resetTestLabel}>
+                [TEST] Reset matches & messages
+              </Text>
+            )}
+          </Pressable>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -379,81 +220,30 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 40,
   },
-  walletCard: {
-    backgroundColor: '#E8F5EE',
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  modalHeaderTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#10261C',
+  },
+  closeIconButton: {
+    width: 40,
+    height: 40,
     borderRadius: 20,
-    padding: 20,
-    borderWidth: 2,
-    borderColor: '#1B5E3B',
-    marginBottom: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E8F5EE',
   },
   roleBadge: {
     marginTop: 8,
     fontSize: 14,
     fontWeight: '700',
     color: '#1B5E3B',
-  },
-  walletEyebrow: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: '#1B5E3B',
-    textTransform: 'uppercase',
-  },
-  balance: {
-    marginTop: 8,
-    fontSize: 44,
-    fontWeight: '800',
-    color: '#0F2A1F',
-  },
-  walletHint: {
-    marginTop: 4,
-    marginBottom: 16,
-    fontSize: 14,
-    color: '#4A6357',
-  },
-  amountLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#3D5C4C',
-    marginBottom: 8,
-  },
-  amountRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  chip: {
-    flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  chipActive: {
-    backgroundColor: '#1B5E3B',
-    borderColor: '#1B5E3B',
-  },
-  chipLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1B5E3B',
-  },
-  chipLabelActive: {
-    color: '#FFFFFF',
-  },
-  amountInput: {
-    borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#10261C',
-    marginBottom: 14,
   },
   title: {
     fontSize: 24,
@@ -472,13 +262,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
-  topUpButton: {
-    backgroundColor: '#1B5E3B',
-  },
-  lessonButton: {
-    marginTop: 10,
-    backgroundColor: '#2F6B4F',
-  },
   switchRoleButton: {
     backgroundColor: '#4338CA',
     marginBottom: 10,
@@ -492,6 +275,39 @@ const styles = StyleSheet.create({
   buttonLabel: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '700',
+  },
+  devSection: {
+    marginTop: 32,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#D8E0DB',
+  },
+  devTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: '#7A4E00',
+    textTransform: 'uppercase',
+  },
+  devHint: {
+    marginTop: 4,
+    marginBottom: 12,
+    fontSize: 13,
+    color: '#8A7A55',
+  },
+  resetTestButton: {
+    backgroundColor: '#FFF4D6',
+    borderWidth: 1,
+    borderColor: '#E6C86A',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  resetTestLabel: {
+    color: '#7A4E00',
+    fontSize: 13,
     fontWeight: '700',
   },
 });
