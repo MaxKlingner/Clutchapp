@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,7 +13,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
+import { Ionicons } from '@expo/vector-icons';
 
+import { colors, radii, shadows } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import {
@@ -26,6 +29,7 @@ import { openStripeCheckoutTest, stripeConfig } from '../services/stripe';
 
 const AMOUNT_PRESETS = [20, 50, 100];
 const LESSON_AMOUNT = 20;
+const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
 
 function formatDate(value) {
   if (!value) return '';
@@ -134,7 +138,7 @@ export default function WalletScreen() {
     try {
       if (!stripeConfig.ready) {
         throw new Error(
-          'Stripe pas prêt. Vérifie EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY et EXPO_PUBLIC_STRIPE_BACKEND_URL dans les secrets EAS (preview/production).'
+          'Stripe pas prêt. Vérifie EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY et EXPO_PUBLIC_SUPABASE_URL (ou EXPO_PUBLIC_STRIPE_BACKEND_URL HTTPS) dans les secrets EAS preview/production, puis rebuild.'
         );
       }
 
@@ -187,7 +191,7 @@ export default function WalletScreen() {
       if (!matches.length) {
         Alert.alert(
           'Aucun tuteur matché',
-          'Match un tuteur dans Matchs avant de simuler un paiement.'
+          'Match un tuteur dans Découvrir avant de simuler un paiement.'
         );
         return;
       }
@@ -266,270 +270,300 @@ export default function WalletScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.title}>Portefeuille</Text>
-        <Text style={styles.subtitle}>
-          {isParent
-            ? 'Solde, recharges et historique des paiements'
-            : 'Gains, retraits et historique des paiements'}
-        </Text>
+    <View style={styles.root}>
+      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
 
-        <View style={[styles.walletCard, !isParent && styles.walletCardTutor]}>
-          <Text
-            style={[styles.walletEyebrow, !isParent && styles.walletEyebrowTutor]}
-          >
-            {isParent ? 'Mon solde' : 'Disponible au retrait'}
-          </Text>
-          {walletLoading ? (
-            <ActivityIndicator
-              color={isParent ? '#1B5E3B' : '#4338CA'}
-              style={{ marginVertical: 16 }}
-            />
-          ) : (
-            <Text style={[styles.balance, !isParent && styles.balanceTutor]}>
-              {(isParent ? balance : available).toFixed(2)} €
-            </Text>
-          )}
-          <Text style={[styles.walletHint, !isParent && styles.walletHintTutor]}>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.topBar}>
+            <Text style={styles.eyebrow}>Clutch</Text>
+            <Text style={styles.title}>Portefeuille</Text>
+          </View>
+          <Text style={styles.subtitle}>
             {isParent
-              ? 'Recharge via Stripe Checkout (mode test — aucun vrai débit)'
-              : `Solde total : ${balance.toFixed(2)} €${
-                  frozen > 0 ? ` · ${frozen.toFixed(2)} € gelés` : ''
-                }${withdrawn > 0 ? ` · ${withdrawn.toFixed(0)} € retirés` : ''}`}
+              ? 'Solde, recharges et historique des paiements'
+              : 'Gains, retraits et historique des paiements'}
           </Text>
 
-          {isParent ? (
-            <>
-              <Text style={styles.amountLabel}>Montant à recharger</Text>
-              <View style={styles.amountRow}>
-                {AMOUNT_PRESETS.map((amount) => {
-                  const active = !customAmount && selectedAmount === amount;
-                  return (
-                    <Pressable
-                      key={amount}
-                      style={[styles.chip, active && styles.chipActive]}
-                      onPress={() => {
-                        setSelectedAmount(amount);
-                        setCustomAmount('');
-                      }}
-                      disabled={busy}
-                    >
-                      <Text
-                        style={[
-                          styles.chipLabel,
-                          active && styles.chipLabelActive,
-                        ]}
-                      >
-                        {amount} €
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+          <View style={styles.walletCard}>
+            <View style={styles.walletCardHeader}>
+              <View style={styles.walletIcon}>
+                <Ionicons name="wallet" size={20} color={colors.mintDeep} />
               </View>
-
-              <TextInput
-                style={styles.amountInput}
-                value={customAmount}
-                onChangeText={setCustomAmount}
-                placeholder="Ou montant personnalisé (€)"
-                placeholderTextColor="#7A9185"
-                keyboardType="decimal-pad"
-                editable={!busy}
-              />
-
-              <Pressable
-                style={[
-                  styles.button,
-                  styles.topUpButton,
-                  busy && styles.buttonDisabled,
-                ]}
-                onPress={onRecharge}
-                disabled={busy}
-              >
-                {busy ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.buttonLabel}>
-                    Recharger {topUpAmount} €
-                  </Text>
-                )}
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.button,
-                  styles.lessonButton,
-                  busy && styles.buttonDisabled,
-                ]}
-                onPress={onSimulateLessonPayment}
-                disabled={busy}
-              >
-                {busy ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.buttonLabel}>
-                    [TEST] Fin de cours (−{LESSON_AMOUNT} €)
-                  </Text>
-                )}
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <View style={styles.amountRow}>
-                {AMOUNT_PRESETS.map((amount) => {
-                  const active = selectedAmount === amount;
-                  return (
-                    <Pressable
-                      key={amount}
-                      style={[
-                        styles.chip,
-                        styles.chipTutor,
-                        active && styles.chipActiveTutor,
-                      ]}
-                      onPress={() => setSelectedAmount(amount)}
-                      disabled={busy}
-                    >
-                      <Text
-                        style={[
-                          styles.chipLabel,
-                          styles.chipLabelTutor,
-                          active && styles.chipLabelActive,
-                        ]}
-                      >
-                        {amount} €
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              <Pressable
-                style={[
-                  styles.button,
-                  styles.withdrawButton,
-                  busy && styles.buttonDisabled,
-                ]}
-                onPress={onWithdraw}
-                disabled={busy}
-              >
-                {busy ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.buttonLabel}>
-                    Retirer {selectedAmount} €
-                  </Text>
-                )}
-              </Pressable>
-            </>
-          )}
-        </View>
-
-        <Text style={styles.sectionTitle}>Historique</Text>
-        {walletLoading ? (
-          <ActivityIndicator color="#1B5E3B" />
-        ) : transactions.length === 0 ? (
-          <Text style={styles.emptyHistory}>
-            Aucune transaction pour le moment.
-          </Text>
-        ) : (
-          transactions.map((tx) => (
-            <View key={tx.id} style={styles.txRow}>
-              <View style={styles.txLeft}>
-                <Text style={styles.txStatus}>{statusLabel(tx.status)}</Text>
-                <Text style={styles.txDate}>{formatDate(tx.createdAt)}</Text>
-              </View>
-              <Text
-                style={[
-                  styles.txAmount,
-                  tx.status === 'refunded' && styles.txAmountMuted,
-                ]}
-              >
-                {isParent ? '−' : '+'}
-                {Number(tx.amount).toFixed(2)} €
+              <Text style={styles.walletEyebrow}>
+                {isParent ? 'Mon solde' : 'Disponible au retrait'}
               </Text>
             </View>
-          ))
-        )}
-      </ScrollView>
-    </SafeAreaView>
+
+            {walletLoading ? (
+              <ActivityIndicator
+                color={colors.mintDeep}
+                style={{ marginVertical: 16 }}
+              />
+            ) : (
+              <Text style={styles.balance}>
+                {(isParent ? balance : available).toFixed(2)} €
+              </Text>
+            )}
+
+            <Text style={styles.walletHint}>
+              {isParent
+                ? 'Recharge via Stripe Checkout (mode test — aucun vrai débit)'
+                : `Solde total : ${balance.toFixed(2)} €${
+                    frozen > 0 ? ` · ${frozen.toFixed(2)} € gelés` : ''
+                  }${withdrawn > 0 ? ` · ${withdrawn.toFixed(0)} € retirés` : ''}`}
+            </Text>
+
+            {isParent ? (
+              <>
+                <Text style={styles.amountLabel}>Montant à recharger</Text>
+                <View style={styles.amountRow}>
+                  {AMOUNT_PRESETS.map((amount) => {
+                    const active = !customAmount && selectedAmount === amount;
+                    return (
+                      <Pressable
+                        key={amount}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => {
+                          setSelectedAmount(amount);
+                          setCustomAmount('');
+                        }}
+                        disabled={busy}
+                      >
+                        <Text
+                          style={[
+                            styles.chipLabel,
+                            active && styles.chipLabelActive,
+                          ]}
+                        >
+                          {amount} €
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <TextInput
+                  style={styles.amountInput}
+                  value={customAmount}
+                  onChangeText={setCustomAmount}
+                  placeholder="Ou montant personnalisé (€)"
+                  placeholderTextColor={colors.mutedSoft}
+                  keyboardType="decimal-pad"
+                  editable={!busy}
+                />
+
+                <Pressable
+                  style={[
+                    styles.button,
+                    styles.topUpButton,
+                    busy && styles.buttonDisabled,
+                  ]}
+                  onPress={onRecharge}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <Text style={styles.buttonLabel}>
+                      Recharger {topUpAmount} €
+                    </Text>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.button,
+                    styles.lessonButton,
+                    busy && styles.buttonDisabled,
+                  ]}
+                  onPress={onSimulateLessonPayment}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <Text style={styles.buttonLabel}>
+                      [TEST] Fin de cours (−{LESSON_AMOUNT} €)
+                    </Text>
+                  )}
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <View style={styles.amountRow}>
+                  {AMOUNT_PRESETS.map((amount) => {
+                    const active = selectedAmount === amount;
+                    return (
+                      <Pressable
+                        key={amount}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setSelectedAmount(amount)}
+                        disabled={busy}
+                      >
+                        <Text
+                          style={[
+                            styles.chipLabel,
+                            active && styles.chipLabelActive,
+                          ]}
+                        >
+                          {amount} €
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <Pressable
+                  style={[
+                    styles.button,
+                    styles.withdrawButton,
+                    busy && styles.buttonDisabled,
+                  ]}
+                  onPress={onWithdraw}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <Text style={styles.buttonLabel}>
+                      Retirer {selectedAmount} €
+                    </Text>
+                  )}
+                </Pressable>
+              </>
+            )}
+          </View>
+
+          <Text style={styles.sectionTitle}>Historique</Text>
+          {walletLoading ? (
+            <ActivityIndicator color={colors.mintDeep} />
+          ) : transactions.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyHistory}>
+                Aucune transaction pour le moment.
+              </Text>
+            </View>
+          ) : (
+            transactions.map((tx) => (
+              <View key={tx.id} style={styles.txRow}>
+                <View style={styles.txLeft}>
+                  <Text style={styles.txStatus}>{statusLabel(tx.status)}</Text>
+                  <Text style={styles.txDate}>{formatDate(tx.createdAt)}</Text>
+                </View>
+                <Text
+                  style={[
+                    styles.txAmount,
+                    tx.status === 'refunded' && styles.txAmountMuted,
+                  ]}
+                >
+                  {isParent ? '−' : '+'}
+                  {Number(tx.amount).toFixed(2)} €
+                </Text>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.page,
+  },
+  mintBand: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.mint,
+  },
   safe: {
     flex: 1,
-    backgroundColor: '#F3F6F4',
+    backgroundColor: 'transparent',
   },
   scroll: {
     flex: 1,
   },
   container: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 40,
   },
+  topBar: {
+    marginBottom: 6,
+  },
+  eyebrow: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    color: colors.mintDeep,
+    textTransform: 'uppercase',
+  },
   title: {
+    marginTop: 2,
     fontSize: 28,
     fontWeight: '800',
-    color: '#10261C',
+    color: colors.ink,
   },
   subtitle: {
-    marginTop: 6,
     marginBottom: 18,
     fontSize: 15,
     lineHeight: 22,
-    color: '#4A6357',
+    color: colors.muted,
   },
   walletCard: {
-    backgroundColor: '#E8F5EE',
-    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
     padding: 20,
-    borderWidth: 2,
-    borderColor: '#1B5E3B',
     marginBottom: 24,
+    ...shadows.card,
   },
-  walletCardTutor: {
-    backgroundColor: '#EEF2FF',
-    borderColor: '#4338CA',
+  walletCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  walletIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.badgeMint,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   walletEyebrow: {
     fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 1,
-    color: '#1B5E3B',
+    letterSpacing: 0.6,
+    color: colors.mintDeep,
     textTransform: 'uppercase',
   },
-  walletEyebrowTutor: {
-    color: '#4338CA',
-  },
   balance: {
-    marginTop: 8,
-    fontSize: 44,
+    marginTop: 12,
+    fontSize: 42,
     fontWeight: '800',
-    color: '#0F2A1F',
-  },
-  balanceTutor: {
-    color: '#1E1B4B',
-    fontSize: 40,
+    color: colors.ink,
   },
   walletHint: {
     marginTop: 4,
     marginBottom: 16,
     fontSize: 14,
-    color: '#4A6357',
-  },
-  walletHintTutor: {
-    color: '#4C1D95',
+    lineHeight: 20,
+    color: colors.muted,
   },
   amountLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#3D5C4C',
+    color: colors.muted,
     marginBottom: 8,
   },
   amountRow: {
@@ -540,90 +574,87 @@ const styles = StyleSheet.create({
   chip: {
     flex: 1,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.page,
     paddingVertical: 10,
     alignItems: 'center',
   },
-  chipTutor: {
-    borderColor: '#C7D2FE',
-  },
   chipActive: {
-    backgroundColor: '#1B5E3B',
-    borderColor: '#1B5E3B',
-  },
-  chipActiveTutor: {
-    backgroundColor: '#4338CA',
-    borderColor: '#4338CA',
+    backgroundColor: colors.mintDeep,
+    borderColor: colors.mintDeep,
   },
   chipLabel: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#1B5E3B',
-  },
-  chipLabelTutor: {
-    color: '#4338CA',
+    color: colors.mintDeep,
   },
   chipLabelActive: {
-    color: '#FFFFFF',
+    color: colors.white,
   },
   amountInput: {
-    borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.page,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#10261C',
+    color: colors.ink,
     marginBottom: 14,
   },
   button: {
-    borderRadius: 14,
+    borderRadius: radii.button,
     paddingVertical: 14,
     alignItems: 'center',
+    ...shadows.soft,
   },
   topUpButton: {
-    backgroundColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
   },
   lessonButton: {
     marginTop: 10,
     backgroundColor: '#2F6B4F',
   },
   withdrawButton: {
-    backgroundColor: '#4338CA',
+    backgroundColor: colors.mintDeep,
     marginTop: 4,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonLabel: {
-    color: '#FFFFFF',
+    color: colors.white,
     fontSize: 16,
     fontWeight: '700',
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#10261C',
+    fontWeight: '800',
+    color: colors.ink,
     marginBottom: 12,
+  },
+  emptyCard: {
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    padding: 18,
+    ...shadows.soft,
   },
   emptyHistory: {
     fontSize: 14,
-    color: '#7A9185',
+    color: colors.mutedSoft,
+    textAlign: 'center',
   },
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 10,
+    ...shadows.soft,
   },
   txLeft: {
     flex: 1,
@@ -631,20 +662,20 @@ const styles = StyleSheet.create({
   },
   txStatus: {
     fontSize: 15,
-    fontWeight: '700',
-    color: '#10261C',
+    fontWeight: '800',
+    color: colors.ink,
   },
   txDate: {
     marginTop: 2,
     fontSize: 13,
-    color: '#7A9185',
+    color: colors.mutedSoft,
   },
   txAmount: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#1B5E3B',
+    color: colors.mintDeep,
   },
   txAmountMuted: {
-    color: '#7A9185',
+    color: colors.mutedSoft,
   },
 });

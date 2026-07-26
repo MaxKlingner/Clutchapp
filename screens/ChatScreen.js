@@ -19,6 +19,7 @@ import { useAuth } from '@clerk/clerk-expo';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { MATCH_STATUS } from '../lib/tutorConstants';
+import { colors, radii, shadows } from '../constants/theme';
 import {
   acceptMatchRequest,
   declineMatchRequest,
@@ -550,15 +551,22 @@ export default function ChatScreen({
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <View style={styles.root}>
+      <View style={styles.mintBand} />
+      <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
       >
         <View style={styles.header}>
-          <Pressable onPress={onBack} hitSlop={12}>
-            <Text style={styles.back}>← Retour</Text>
+          <Pressable
+            style={styles.backButton}
+            onPress={onBack}
+            hitSlop={12}
+            accessibilityLabel="Retour"
+          >
+            <Ionicons name="chevron-back" size={22} color={colors.mintDeep} />
           </Pressable>
           <View style={styles.headerText}>
             <Text style={styles.title} numberOfLines={1}>
@@ -620,7 +628,7 @@ export default function ChatScreen({
 
         {loading ? (
           <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#1B5E3B" />
+            <ActivityIndicator size="large" color={colors.mintDeep} />
           </View>
         ) : (
           <FlatList
@@ -648,7 +656,7 @@ export default function ChatScreen({
               disabled={sending}
               accessibilityLabel="Demander le paiement du cours"
             >
-              <Ionicons name="card-outline" size={22} color="#1B5E3B" />
+              <Ionicons name="card-outline" size={22} color={colors.mintDeep} />
             </Pressable>
           ) : null}
 
@@ -833,102 +841,121 @@ export default function ChatScreen({
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.page,
+  },
+  mintBand: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 120,
+    backgroundColor: colors.mint,
+  },
   safe: {
     flex: 1,
-    backgroundColor: '#F3F6F4',
+    backgroundColor: 'transparent',
   },
   flex: {
     flex: 1,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2EAE5',
-    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    ...shadows.soft,
   },
-  back: {
-    fontSize: 16,
-    color: '#1B5E3B',
-    fontWeight: '600',
-    marginBottom: 6,
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.badgeMint,
   },
   headerText: {
+    flex: 1,
     gap: 2,
+    minWidth: 0,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#10261C',
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#4A6357',
+    fontSize: 13,
+    color: colors.muted,
   },
   requestBanner: {
     marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 4,
     marginBottom: 4,
-    backgroundColor: '#EEF2FF',
-    borderRadius: 16,
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
     padding: 14,
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
+    ...shadows.soft,
   },
   requestBannerTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#312E81',
+    color: colors.ink,
   },
   requestBannerText: {
     marginTop: 4,
     marginBottom: 12,
     fontSize: 13,
     lineHeight: 19,
-    color: '#4338CA',
+    color: colors.muted,
   },
   requestBannerActions: {
     gap: 8,
   },
   requestAcceptBtn: {
-    backgroundColor: '#1B5E3B',
-    borderRadius: 12,
+    backgroundColor: colors.mintDeep,
+    borderRadius: radii.button,
     paddingVertical: 12,
     alignItems: 'center',
   },
   requestAcceptLabel: {
-    color: '#FFFFFF',
+    color: colors.white,
     fontWeight: '700',
     fontSize: 15,
   },
   requestDeclineBtn: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: colors.white,
+    borderRadius: radii.button,
     paddingVertical: 11,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderWidth: 1.5,
+    borderColor: colors.border,
   },
   requestDeclineLabel: {
-    color: '#6B7280',
+    color: colors.muted,
     fontWeight: '700',
     fontSize: 15,
   },
   pendingParentBanner: {
     marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 4,
     marginBottom: 4,
     backgroundColor: '#FFF8E8',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#F0E0B2',
   },
   pendingParentText: {
     fontSize: 13,
@@ -936,8 +963,8 @@ const styles = StyleSheet.create({
     color: '#7A4E00',
   },
   inputDisabled: {
-    backgroundColor: '#EEF1EF',
-    color: '#7A9185',
+    backgroundColor: colors.chipBg,
+    color: colors.mutedSoft,
   },
   centered: {
     flex: 1,
@@ -951,7 +978,7 @@ const styles = StyleSheet.create({
   },
   empty: {
     textAlign: 'center',
-    color: '#7A9185',
+    color: colors.mutedSoft,
     marginTop: 40,
     fontSize: 15,
   },
@@ -964,21 +991,20 @@ const styles = StyleSheet.create({
   },
   bubbleMine: {
     alignSelf: 'flex-end',
-    backgroundColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
   },
   bubbleTheirs: {
     alignSelf: 'flex-start',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    backgroundColor: colors.card,
+    ...shadows.soft,
   },
   bubbleText: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#10261C',
+    color: colors.ink,
   },
   bubbleTextMine: {
-    color: '#FFFFFF',
+    color: colors.white,
   },
   paymentCard: {
     borderRadius: 18,
@@ -989,13 +1015,13 @@ const styles = StyleSheet.create({
   },
   paymentCardMine: {
     alignSelf: 'flex-end',
-    backgroundColor: '#EEF2FF',
-    borderColor: '#4338CA',
+    backgroundColor: colors.mintSoft,
+    borderColor: colors.mintDeep,
   },
   paymentCardTheirs: {
     alignSelf: 'flex-start',
-    backgroundColor: '#E8F5EE',
-    borderColor: '#1B5E3B',
+    backgroundColor: colors.badgeMint,
+    borderColor: colors.mintDeep,
   },
   paymentCardMuted: {
     opacity: 0.85,
@@ -1005,28 +1031,28 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
-    color: '#4A6357',
+    color: colors.muted,
     marginBottom: 6,
   },
   paymentTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#10261C',
+    color: colors.ink,
   },
   paymentMeta: {
     marginTop: 4,
     fontSize: 13,
-    color: '#4A6357',
+    color: colors.muted,
   },
   paymentWaiting: {
     marginTop: 10,
     fontSize: 13,
     fontStyle: 'italic',
-    color: '#4338CA',
+    color: colors.mintDeep,
   },
   payButton: {
     marginTop: 12,
-    backgroundColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
@@ -1080,33 +1106,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E2EAE5',
-    backgroundColor: '#FFFFFF',
+    borderTopColor: colors.border,
+    backgroundColor: colors.card,
   },
   payRequestIcon: {
     width: 44,
     height: 44,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#1B5E3B',
+    borderColor: colors.mintDeep,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8F5EE',
+    backgroundColor: colors.badgeMint,
   },
   input: {
     flex: 1,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: '#D7E3DC',
+    borderColor: colors.border,
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#10261C',
-    backgroundColor: '#F8FBF9',
+    color: colors.ink,
+    backgroundColor: colors.page,
   },
   sendButton: {
-    backgroundColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
     borderRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -1117,7 +1143,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   sendLabel: {
-    color: '#FFFFFF',
+    color: colors.white,
     fontWeight: '700',
     fontSize: 14,
   },
@@ -1128,25 +1154,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
     padding: 20,
+    ...shadows.card,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#10261C',
+    color: colors.ink,
   },
   modalHint: {
     marginTop: 6,
     marginBottom: 14,
     fontSize: 14,
-    color: '#4A6357',
+    color: colors.muted,
   },
   modalLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#3D5C4C',
+    color: colors.muted,
     marginBottom: 8,
   },
   hoursRow: {
@@ -1158,40 +1185,40 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#B7D2C3',
+    borderColor: colors.border,
     paddingVertical: 10,
     alignItems: 'center',
-    backgroundColor: '#F8FBF9',
+    backgroundColor: colors.page,
   },
   hourChipActive: {
-    backgroundColor: '#1B5E3B',
-    borderColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
+    borderColor: colors.mintDeep,
   },
   hourChipLabel: {
     fontWeight: '700',
-    color: '#1B5E3B',
+    color: colors.mintDeep,
   },
   hourChipLabelActive: {
-    color: '#FFFFFF',
+    color: colors.white,
   },
   modalInput: {
     borderWidth: 1,
-    borderColor: '#D7E3DC',
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
-    color: '#10261C',
+    color: colors.ink,
     marginBottom: 12,
   },
   modalTotal: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#1B5E3B',
+    color: colors.mintDeep,
     marginBottom: 14,
   },
   modalPrimary: {
-    backgroundColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -1202,7 +1229,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalCancelLabel: {
-    color: '#4A6357',
+    color: colors.muted,
     fontWeight: '600',
   },
   starsRow: {
@@ -1215,7 +1242,7 @@ const styles = StyleSheet.create({
     fontSize: 36,
   },
   starActive: {
-    color: '#E6B800',
+    color: colors.star,
   },
   starInactive: {
     color: '#D1D5DB',

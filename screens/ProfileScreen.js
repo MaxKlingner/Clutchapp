@@ -9,14 +9,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { CommonActions, useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
-import { ensureTutorProfile, resetMatchesAndMessages } from '../lib/supabase';
-import TutorProfileEditor from './TutorProfileEditor';
+import { ensureTutorProfile, resetMatchesAndMessages, resetMyTutorAnnouncement } from '../lib/supabase';
 
 export default function ProfileScreen() {
   const navigation = useNavigation();
@@ -25,9 +24,31 @@ export default function ProfileScreen() {
   const { role, switching, switchRole } = useRole();
   const [signingOut, setSigningOut] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [resettingAnnouncement, setResettingAnnouncement] = useState(false);
 
   const isParent = role !== ROLES.TUTOR;
   const canClose = navigation.canGoBack();
+
+  function resetToHomeTabs(nextRole) {
+    const homeTab = nextRole === ROLES.TUTOR ? 'TutorHome' : 'Matchs';
+
+    // Ferme Réglages / modales et repart sur l'onglet d'accueil du rôle actuel
+    // avant que le RoleGate remonte l'autre navigateur.
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [
+          {
+            name: 'MainTabs',
+            state: {
+              index: 0,
+              routes: [{ name: homeTab }],
+            },
+          },
+        ],
+      })
+    );
+  }
 
   async function onSignOut() {
     if (signingOut) return;
@@ -61,6 +82,10 @@ export default function ProfileScreen() {
                 user?.fullName ||
                 [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
                 null;
+
+              // Remet la stack sur Accueil/Découvrir avant le changement de rôle
+              resetToHomeTabs(isParent ? ROLES.PARENT : ROLES.TUTOR);
+
               await switchRole(userId, nextRole, fullName);
               if (nextRole === ROLES.TUTOR) {
                 await ensureTutorProfile({
@@ -81,7 +106,7 @@ export default function ProfileScreen() {
   }
 
   async function onResetMatches() {
-    if (resetting) return;
+    if (resetting || resettingAnnouncement) return;
 
     Alert.alert(
       'Reset de test',
@@ -113,6 +138,39 @@ export default function ProfileScreen() {
     );
   }
 
+  async function onResetMyAnnouncement() {
+    if (resetting || resettingAnnouncement || !userId) return;
+
+    Alert.alert(
+      'Reset mon annonce',
+      'Remet uniquement ton annonce tuteur à l’état « non publiée » (matières, bio, tarif). Les annonces des autres testeurs ne sont pas touchées.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Réinitialiser mon annonce',
+          style: 'destructive',
+          onPress: async () => {
+            setResettingAnnouncement(true);
+            try {
+              await resetMyTutorAnnouncement(userId);
+              Alert.alert(
+                'Annonce réinitialisée',
+                'Ton bouton Accueil affiche à nouveau « Créer mon annonce ».'
+              );
+            } catch (err) {
+              Alert.alert(
+                'Erreur',
+                err?.message ?? 'Reset de l’annonce impossible.'
+              );
+            } finally {
+              setResettingAnnouncement(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -133,8 +191,6 @@ export default function ProfileScreen() {
             </Pressable>
           </View>
         ) : null}
-
-        {!isParent ? <TutorProfileEditor /> : null}
 
         {canClose ? null : <Text style={styles.title}>Réglages</Text>}
         <Text style={styles.roleBadge}>
@@ -188,16 +244,35 @@ export default function ProfileScreen() {
           <Pressable
             style={[
               styles.resetTestButton,
-              resetting && styles.buttonDisabled,
+              (resetting || resettingAnnouncement) && styles.buttonDisabled,
             ]}
             onPress={onResetMatches}
-            disabled={resetting || signingOut}
+            disabled={resetting || resettingAnnouncement || signingOut}
           >
             {resetting ? (
               <ActivityIndicator color="#7A4E00" />
             ) : (
               <Text style={styles.resetTestLabel}>
                 [TEST] Reset matches & messages
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
+            style={[
+              styles.resetTestButton,
+              styles.resetAnnouncementButton,
+              (resetting || resettingAnnouncement) && styles.buttonDisabled,
+            ]}
+            onPress={onResetMyAnnouncement}
+            disabled={
+              resetting || resettingAnnouncement || signingOut || !userId
+            }
+          >
+            {resettingAnnouncement ? (
+              <ActivityIndicator color="#7A4E00" />
+            ) : (
+              <Text style={styles.resetTestLabel}>
+                [TEST] Reset mon annonce (compte actif)
               </Text>
             )}
           </Pressable>
@@ -305,9 +380,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: 'center',
   },
+  resetAnnouncementButton: {
+    marginTop: 10,
+  },
   resetTestLabel: {
     color: '#7A4E00',
     fontSize: 13,
     fontWeight: '700',
+    textAlign: 'center',
   },
 });

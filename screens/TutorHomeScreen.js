@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,14 +14,12 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
+import { colors, radii, shadows } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { fetchTutorDashboard } from '../lib/supabase';
 
-const MINT = '#B5E8D0';
-const GREEN = '#1B5E3B';
-const INK = '#10261C';
-const MUTED = '#4A6357';
+const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
 
 const TIERS = [
   { id: 'bronze', label: 'Tuteur Bronze', minCourses: 0 },
@@ -28,20 +28,8 @@ const TIERS = [
   { id: 'top', label: 'Top Tuteur', minCourses: 30 },
 ];
 
-function getInitials(name) {
-  return String(name || '?')
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function formatMoney(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return '0 €';
-  return `${amount.toFixed(amount % 1 === 0 ? 0 : 2)} €`;
+function firstName(fullName) {
+  return String(fullName || 'Tuteur').trim().split(/\s+/)[0] || 'Tuteur';
 }
 
 function formatReviewDate(value) {
@@ -55,6 +43,15 @@ function formatReviewDate(value) {
   } catch {
     return '';
   }
+}
+
+/** Annonce en ligne = au moins une vraie matière (pas le placeholder par défaut). */
+function isAnnouncementActive(profile) {
+  if (!profile) return false;
+  const specialties = (profile.specialties || [])
+    .map((item) => String(item || '').trim())
+    .filter((item) => item && item.toLowerCase() !== 'matière');
+  return specialties.length > 0;
 }
 
 function getStatusBadge({ rating, reviewCount, coursesDone }) {
@@ -80,7 +77,6 @@ function getTierProgress(coursesDone) {
   if (!next) {
     return {
       currentLabel: current.label,
-      nextLabel: null,
       remaining: 0,
       progress: 1,
       hint: 'Palier max atteint — bravo !',
@@ -94,13 +90,12 @@ function getTierProgress(coursesDone) {
 
   return {
     currentLabel: current.label,
-    nextLabel: next.label,
     remaining,
     progress,
     hint:
       remaining === 1
-        ? `Prochain palier : ${next.label} dans 1 cours`
-        : `Prochain palier : ${next.label} dans ${remaining} cours`,
+        ? `Prochain palier dans 1 cours`
+        : `Prochain palier dans ${remaining} cours`,
   };
 }
 
@@ -113,7 +108,7 @@ function Stars({ rating }) {
           key={star}
           name={star <= value ? 'star' : 'star-outline'}
           size={14}
-          color={star <= value ? '#E6B800' : '#C5D0C9'}
+          color={star <= value ? colors.star : '#C5D0C9'}
         />
       ))}
     </View>
@@ -129,6 +124,7 @@ export default function TutorHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dashboard, setDashboard] = useState(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const isTutor = role === ROLES.TUTOR;
 
@@ -171,6 +167,7 @@ export default function TutorHomeScreen() {
     'Tuteur';
 
   const coursesDone = dashboard?.coursesDone ?? 0;
+  const announcementActive = isAnnouncementActive(dashboard?.profile);
   const badge = useMemo(
     () =>
       getStatusBadge({
@@ -184,201 +181,303 @@ export default function TutorHomeScreen() {
 
   if (!isTutor) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>Espace tuteur</Text>
-          <Text style={styles.emptyText}>
-            Cet écran est réservé aux comptes tuteur.
-          </Text>
-        </View>
-      </SafeAreaView>
+      <View style={styles.root}>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.centered}>
+            <Text style={styles.emptyTitle}>Espace tuteur</Text>
+            <Text style={styles.emptyText}>
+              Cet écran est réservé aux comptes tuteur.
+            </Text>
+          </View>
+        </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.topBar}>
-          <Text style={styles.brand}>CLUTCH</Text>
-          <Pressable
-            style={styles.settingsButton}
-            onPress={() => navigation.navigate('Settings')}
-            accessibilityLabel="Réglages"
-            hitSlop={8}
-          >
-            <Ionicons name="settings-outline" size={22} color={GREEN} />
-          </Pressable>
-        </View>
+    <View style={styles.root}>
+      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
 
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color={GREEN} />
-            <Text style={styles.loadingText}>Chargement de ton espace…</Text>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.topBar}>
+            <View style={styles.topBarText}>
+              <Text style={styles.hello}>Bonjour</Text>
+              <Text style={styles.name} numberOfLines={1}>
+                {firstName(displayName)}
+              </Text>
+            </View>
+            <View style={styles.topBarActions}>
+              <Pressable
+                style={styles.headerIconButton}
+                onPress={() => setAboutOpen(true)}
+                accessibilityLabel="À propos de Clutch"
+                hitSlop={8}
+              >
+                <Ionicons
+                  name="help-circle-outline"
+                  size={24}
+                  color={colors.mintDeep}
+                />
+              </Pressable>
+              <Pressable
+                style={styles.headerIconButton}
+                onPress={() => navigation.navigate('Settings')}
+                accessibilityLabel="Réglages"
+                hitSlop={8}
+              >
+                <Ionicons
+                  name="settings-outline"
+                  size={22}
+                  color={colors.mintDeep}
+                />
+              </Pressable>
+            </View>
           </View>
-        ) : error ? (
-          <View style={styles.centered}>
-            <Text style={styles.emptyTitle}>Oups</Text>
-            <Text style={styles.emptyText}>{error}</Text>
-          </View>
-        ) : (
-          <>
-            <View style={styles.profileRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{getInitials(displayName)}</Text>
-              </View>
-              <View style={styles.profileText}>
-                <Text style={styles.hello}>Bonjour</Text>
-                <Text style={styles.name} numberOfLines={1}>
-                  {displayName}
+
+          <Modal
+            visible={aboutOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setAboutOpen(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <Pressable
+                style={styles.modalBackdrop}
+                onPress={() => setAboutOpen(false)}
+              />
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>À propos de Clutch</Text>
+                <Text style={styles.modalSectionLabel}>Notre mission</Text>
+                <Text style={styles.modalBody}>
+                  Clutch rend le soutien scolaire accessible en mettant en
+                  relation directe parents, étudiants et tuteurs. Transparence
+                  sur les profils, les tarifs et les avis : tu choisis le bon
+                  accompagnement sans friction.
                 </Text>
+                <Text style={styles.modalSectionLabel}>Le projet</Text>
+                <Text style={styles.modalBody}>
+                  Né d’une ambition simple : fluidifier la recherche de tuteurs
+                  et valoriser les étudiants qui enseignent. Clutch veut devenir
+                  le réflexe pour trouver, matcher et progresser — efficacement
+                  et en confiance.
+                </Text>
+                <Pressable
+                  style={styles.modalCloseButton}
+                  onPress={() => setAboutOpen(false)}
+                >
+                  <Text style={styles.modalCloseLabel}>Fermer</Text>
+                </Pressable>
+              </View>
+            </View>
+          </Modal>
+
+          {loading ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={colors.mintDeep} />
+              <Text style={styles.loadingText}>Chargement de ton espace…</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.centered}>
+              <Text style={styles.emptyTitle}>Oups</Text>
+              <Text style={styles.emptyText}>{error}</Text>
+            </View>
+          ) : (
+            <>
+              <Pressable
+                style={[
+                  styles.ctaCard,
+                  announcementActive ? styles.ctaCardEdit : styles.ctaCardCreate,
+                ]}
+                onPress={() => navigation.navigate('EditTutorProfile')}
+                accessibilityLabel={
+                  announcementActive
+                    ? 'Modifier mon annonce'
+                    : 'Créer mon annonce'
+                }
+              >
                 <View
                   style={[
-                    styles.badge,
-                    badge.tone === 'gold' && styles.badgeGold,
-                    badge.tone === 'new' && styles.badgeNew,
+                    styles.ctaIconWrap,
+                    announcementActive
+                      ? styles.ctaIconWrapEdit
+                      : styles.ctaIconWrapCreate,
                   ]}
                 >
                   <Ionicons
-                    name={
-                      badge.tone === 'gold'
-                        ? 'trophy'
-                        : badge.tone === 'verified'
-                          ? 'shield-checkmark'
-                          : 'leaf'
-                    }
-                    size={13}
+                    name={announcementActive ? 'create-outline' : 'add'}
+                    size={22}
                     color={
-                      badge.tone === 'gold'
-                        ? '#7A4E00'
-                        : badge.tone === 'new'
-                          ? '#4338CA'
-                          : GREEN
+                      announcementActive ? colors.mintDeep : colors.white
                     }
                   />
+                </View>
+                <View style={styles.ctaTextWrap}>
                   <Text
                     style={[
-                      styles.badgeLabel,
-                      badge.tone === 'gold' && styles.badgeLabelGold,
-                      badge.tone === 'new' && styles.badgeLabelNew,
+                      styles.ctaTitle,
+                      !announcementActive && styles.ctaTitleOnDark,
                     ]}
                   >
-                    {badge.label}
+                    {announcementActive
+                      ? 'Modifier mon annonce'
+                      : 'Créer mon annonce'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.ctaSubtitle,
+                      !announcementActive && styles.ctaSubtitleOnDark,
+                    ]}
+                  >
+                    {announcementActive
+                      ? 'Tarifs, matières, bio et disponibilités'
+                      : 'Publie ton profil pour apparaître aux parents'}
                   </Text>
                 </View>
-              </View>
-            </View>
-
-            <View style={styles.earningsCard}>
-              <Text style={styles.earningsEyebrow}>Gains Clutch</Text>
-              <Text style={styles.earningsMonth}>
-                {formatMoney(dashboard?.monthEarnings)} gagnés ce mois-ci
-              </Text>
-              <Text style={styles.earningsTotal}>
-                Gains totaux : {formatMoney(dashboard?.totalEarnings)}
-              </Text>
-              <Text style={styles.earningsHint}>
-                Disponible au retrait : {formatMoney(dashboard?.available)}
-                {(dashboard?.frozen || 0) > 0
-                  ? ` · ${formatMoney(dashboard.frozen)} gelés`
-                  : ''}
-              </Text>
-            </View>
-
-            <Text style={styles.sectionTitle}>Tes performances</Text>
-            <View style={styles.statsGrid}>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{coursesDone}</Text>
-                <Text style={styles.statLabel}>Cours donnés</Text>
-              </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>
-                  {dashboard?.hoursTaught ?? 0}h
-                </Text>
-                <Text style={styles.statLabel}>Heures enseignées</Text>
-              </View>
-              <View style={[styles.statCard, styles.statCardWide]}>
-                <Text style={styles.statValue}>
-                  {(dashboard?.rating || 0) > 0
-                    ? `${dashboard.rating.toFixed(1)} / 5 ★`
-                    : '— / 5 ★'}
-                </Text>
-                <Text style={styles.statLabel}>
-                  Note globale
-                  {(dashboard?.reviewCount || 0) > 0
-                    ? ` · ${dashboard.reviewCount} avis`
-                    : ' · aucun avis'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.progressCard}>
-              <View style={styles.progressHeader}>
-                <Text style={styles.progressCurrent}>{tier.currentLabel}</Text>
-                {tier.nextLabel ? (
-                  <Text style={styles.progressNext}>{tier.nextLabel}</Text>
-                ) : null}
-              </View>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    { width: `${Math.round(tier.progress * 100)}%` },
-                  ]}
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={
+                    announcementActive ? colors.mintDeep : colors.white
+                  }
                 />
-              </View>
-              <Text style={styles.progressHint}>{tier.hint}</Text>
-            </View>
+              </Pressable>
 
-            <Text style={styles.sectionTitle}>Derniers retours & avis</Text>
-            {(dashboard?.reviews?.length || 0) === 0 ? (
-              <View style={styles.emptyReviews}>
-                <Text style={styles.emptyReviewsText}>
-                  Pas encore d’avis. Tes premiers retours apparaîtront ici après
-                  tes cours payés.
-                </Text>
+              <Text style={styles.sectionTitle}>Mes Performances</Text>
+              <View style={styles.statsGrid}>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>
+                    {(dashboard?.rating || 0) > 0
+                      ? dashboard.rating.toFixed(1)
+                      : '—'}
+                  </Text>
+                  <Text style={styles.statLabel}>Note globale ★</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statValue}>{coursesDone}</Text>
+                  <Text style={styles.statLabel}>Cours dispensés</Text>
+                </View>
+                <View style={[styles.statCard, styles.statCardWide]}>
+                  <Text style={styles.statValue}>
+                    {dashboard?.hoursTaught ?? 0} h
+                  </Text>
+                  <Text style={styles.statLabel}>Heures d’enseignement</Text>
+                </View>
               </View>
-            ) : (
-              dashboard.reviews.map((review) => (
-                <View key={review.id} style={styles.reviewCard}>
-                  <View style={styles.reviewHeader}>
-                    <Text style={styles.reviewName}>
-                      {review.reviewerFirstName}
-                    </Text>
-                    <Text style={styles.reviewDate}>
-                      {formatReviewDate(review.createdAt)}
+
+              <View style={styles.progressCard}>
+                <View style={styles.progressHeader}>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      badge.tone === 'gold' && styles.statusBadgeGold,
+                      badge.tone === 'new' && styles.statusBadgeNew,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        badge.tone === 'gold'
+                          ? 'trophy'
+                          : badge.tone === 'verified'
+                            ? 'shield-checkmark'
+                            : 'leaf'
+                      }
+                      size={13}
+                      color={
+                        badge.tone === 'gold'
+                          ? '#7A4E00'
+                          : badge.tone === 'new'
+                            ? '#4338CA'
+                            : colors.mintDeep
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.statusBadgeLabel,
+                        badge.tone === 'gold' && styles.statusBadgeLabelGold,
+                        badge.tone === 'new' && styles.statusBadgeLabelNew,
+                      ]}
+                    >
+                      {badge.label}
                     </Text>
                   </View>
-                  <Stars rating={review.rating} />
-                  {review.comment ? (
-                    <Text style={styles.reviewComment}>{review.comment}</Text>
-                  ) : (
-                    <Text style={styles.reviewCommentMuted}>Sans commentaire</Text>
-                  )}
+                  <Text style={styles.progressCurrent}>{tier.currentLabel}</Text>
                 </View>
-              ))
-            )}
-          </>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${Math.round(tier.progress * 100)}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressHint}>{tier.hint}</Text>
+              </View>
+
+              <Text style={styles.sectionTitle}>Derniers avis reçus</Text>
+              {(dashboard?.reviews?.length || 0) === 0 ? (
+                <View style={styles.emptyReviews}>
+                  <Text style={styles.emptyReviewsText}>
+                    Pas encore d’avis. Tes premiers retours apparaîtront ici
+                    après tes cours.
+                  </Text>
+                </View>
+              ) : (
+                dashboard.reviews.map((review) => (
+                  <View key={review.id} style={styles.reviewCard}>
+                    <View style={styles.reviewHeader}>
+                      <Text style={styles.reviewName}>
+                        {review.reviewerFirstName}
+                      </Text>
+                      <Text style={styles.reviewDate}>
+                        {formatReviewDate(review.createdAt)}
+                      </Text>
+                    </View>
+                    <Stars rating={review.rating} />
+                    {review.comment ? (
+                      <Text style={styles.reviewComment}>{review.comment}</Text>
+                    ) : (
+                      <Text style={styles.reviewCommentMuted}>
+                        Sans commentaire
+                      </Text>
+                    )}
+                  </View>
+                ))
+              )}
+            </>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.page,
+  },
+  mintBand: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.mint,
+  },
   safe: {
     flex: 1,
-    backgroundColor: '#F3F6F4',
+    backgroundColor: 'transparent',
   },
   scroll: {
     flex: 1,
   },
   container: {
-    paddingHorizontal: 22,
-    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 36,
   },
   topBar: {
@@ -386,20 +485,86 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 18,
+    minHeight: 52,
   },
-  brand: {
-    fontSize: 22,
+  topBarText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  hello: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  name: {
+    marginTop: 2,
+    fontSize: 28,
     fontWeight: '800',
-    letterSpacing: 1.5,
-    color: INK,
+    color: colors.ink,
   },
-  settingsButton: {
+  topBarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  headerIconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8F5EE',
+    backgroundColor: 'rgba(255,255,255,0.65)',
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 42, 31, 0.45)',
+  },
+  modalCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 20,
+    zIndex: 1,
+    ...shadows.card,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.ink,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  modalSectionLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: colors.mintDeep,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  modalBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.muted,
+    marginBottom: 14,
+  },
+  modalCloseButton: {
+    marginTop: 6,
+    backgroundColor: colors.mintDeep,
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  modalCloseLabel: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '700',
   },
   centered: {
     minHeight: 220,
@@ -409,122 +574,75 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   loadingText: {
-    color: MUTED,
+    color: colors.muted,
     fontSize: 14,
   },
   emptyTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: INK,
+    color: colors.ink,
   },
   emptyText: {
     textAlign: 'center',
-    color: MUTED,
+    color: colors.muted,
     fontSize: 15,
     lineHeight: 22,
   },
-  profileRow: {
+  ctaCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    marginBottom: 18,
+    borderRadius: radii.card,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    marginBottom: 24,
+    ...shadows.card,
   },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: MINT,
+  ctaCardCreate: {
+    backgroundColor: colors.mintDeep,
+  },
+  ctaCardEdit: {
+    backgroundColor: colors.card,
+  },
+  ctaIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
   },
-  avatarText: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: GREEN,
+  ctaIconWrapCreate: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
   },
-  profileText: {
+  ctaIconWrapEdit: {
+    backgroundColor: colors.badgeMint,
+  },
+  ctaTextWrap: {
     flex: 1,
+    minWidth: 0,
   },
-  hello: {
-    fontSize: 14,
-    color: MUTED,
-    fontWeight: '600',
-  },
-  name: {
-    marginTop: 2,
-    fontSize: 26,
+  ctaTitle: {
+    fontSize: 16,
     fontWeight: '800',
-    color: INK,
+    color: colors.ink,
   },
-  badge: {
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#E8F5EE',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+  ctaTitleOnDark: {
+    color: colors.white,
   },
-  badgeGold: {
-    backgroundColor: '#FFF4D6',
-  },
-  badgeNew: {
-    backgroundColor: '#EEF2FF',
-  },
-  badgeLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: GREEN,
-  },
-  badgeLabelGold: {
-    color: '#7A4E00',
-  },
-  badgeLabelNew: {
-    color: '#4338CA',
-  },
-  earningsCard: {
-    backgroundColor: MINT,
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 22,
-    shadowColor: '#0F2A1F',
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-  },
-  earningsEyebrow: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    color: GREEN,
-    textTransform: 'uppercase',
-  },
-  earningsMonth: {
-    marginTop: 8,
-    fontSize: 26,
-    fontWeight: '800',
-    color: INK,
-  },
-  earningsTotal: {
-    marginTop: 6,
-    fontSize: 15,
-    fontWeight: '700',
-    color: GREEN,
-  },
-  earningsHint: {
-    marginTop: 8,
+  ctaSubtitle: {
+    marginTop: 3,
     fontSize: 13,
-    color: MUTED,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: colors.muted,
+  },
+  ctaSubtitleOnDark: {
+    color: 'rgba(255,255,255,0.78)',
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: INK,
+    color: colors.ink,
     marginBottom: 12,
   },
   statsGrid: {
@@ -536,91 +654,105 @@ const styles = StyleSheet.create({
   statCard: {
     width: '48%',
     flexGrow: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 18,
     paddingVertical: 16,
     paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
-    shadowColor: '#0F2A1F',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    ...shadows.soft,
   },
   statCardWide: {
     width: '100%',
   },
   statValue: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
-    color: GREEN,
+    color: colors.mintDeep,
   },
   statLabel: {
     marginTop: 4,
     fontSize: 13,
-    color: MUTED,
+    color: colors.muted,
     fontWeight: '600',
   },
   progressCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 18,
     padding: 16,
     marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    ...shadows.soft,
   },
   progressHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    gap: 10,
+    marginBottom: 12,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.badgeMint,
+    borderRadius: radii.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  statusBadgeGold: {
+    backgroundColor: '#FFF4D6',
+  },
+  statusBadgeNew: {
+    backgroundColor: '#EEF2FF',
+  },
+  statusBadgeLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.mintDeep,
+  },
+  statusBadgeLabelGold: {
+    color: '#7A4E00',
+  },
+  statusBadgeLabelNew: {
+    color: '#4338CA',
   },
   progressCurrent: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: INK,
-  },
-  progressNext: {
     fontSize: 13,
-    fontWeight: '600',
-    color: MUTED,
+    fontWeight: '700',
+    color: colors.muted,
   },
   progressTrack: {
     height: 10,
-    borderRadius: 999,
+    borderRadius: radii.pill,
     backgroundColor: '#E8F0EB',
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    borderRadius: 999,
-    backgroundColor: GREEN,
+    borderRadius: radii.pill,
+    backgroundColor: colors.mintDeep,
   },
   progressHint: {
     marginTop: 10,
     fontSize: 13,
-    color: MUTED,
+    color: colors.muted,
     fontWeight: '600',
   },
   emptyReviews: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 18,
     padding: 18,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    ...shadows.soft,
   },
   emptyReviewsText: {
     fontSize: 14,
     lineHeight: 21,
-    color: MUTED,
+    color: colors.muted,
   },
   reviewCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: 18,
     padding: 16,
     marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    ...shadows.soft,
   },
   reviewHeader: {
     flexDirection: 'row',
@@ -631,11 +763,11 @@ const styles = StyleSheet.create({
   reviewName: {
     fontSize: 15,
     fontWeight: '800',
-    color: INK,
+    color: colors.ink,
   },
   reviewDate: {
     fontSize: 12,
-    color: '#7A9185',
+    color: colors.mutedSoft,
   },
   starsRow: {
     flexDirection: 'row',
@@ -645,7 +777,7 @@ const styles = StyleSheet.create({
   reviewComment: {
     fontSize: 14,
     lineHeight: 21,
-    color: MUTED,
+    color: colors.muted,
   },
   reviewCommentMuted: {
     fontSize: 13,

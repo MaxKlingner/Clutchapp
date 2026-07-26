@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Pressable,
   StyleSheet,
@@ -10,7 +11,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
+import { Ionicons } from '@expo/vector-icons';
 
+import { colors, radii, shadows } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { MATCH_STATUS } from '../lib/tutorConstants';
@@ -22,6 +25,18 @@ import {
   fetchTutorMatchRequests,
 } from '../lib/supabase';
 import ChatScreen from './ChatScreen';
+
+const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
+
+function getInitials(name) {
+  return String(name || '?')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
 
 export default function MessagesScreen() {
   const { userId } = useAuth();
@@ -145,27 +160,31 @@ export default function MessagesScreen() {
 
   function renderParentMatch({ item }) {
     const pending = item.status === MATCH_STATUS.PENDING;
-    const initials = (item.tutor?.name ?? '?')
-      .split(' ')
-      .filter(Boolean)
-      .map((part) => part[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase();
+    const name = item.tutor?.name ?? 'Tuteur';
 
     return (
-      <Pressable style={styles.row} onPress={() => setSelectedMatch(item)}>
+      <Pressable style={styles.card} onPress={() => setSelectedMatch(item)}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initials}</Text>
+          <Text style={styles.avatarText}>{getInitials(name)}</Text>
         </View>
         <View style={styles.rowBody}>
-          <Text style={styles.rowTitle}>{item.tutor?.name ?? 'Tuteur'}</Text>
-          <Text style={styles.rowSubtitle}>
+          <View style={styles.rowTitleRow}>
+            <Text style={styles.rowTitle} numberOfLines={1}>
+              {name}
+            </Text>
+            {pending ? (
+              <View style={styles.pendingPill}>
+                <Text style={styles.pendingPillLabel}>En attente</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.rowSubtitle} numberOfLines={2}>
             {pending
-              ? 'Demande envoyée — en attente du tuteur · Appuyer pour ouvrir'
+              ? 'Demande envoyée — en attente du tuteur'
               : `${item.tutor?.subject ?? 'Match'} · Appuyer pour discuter`}
           </Text>
         </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.mutedSoft} />
       </Pressable>
     );
   }
@@ -173,13 +192,6 @@ export default function MessagesScreen() {
   function renderTutorMatch({ item }) {
     const pending = item.status === MATCH_STATUS.PENDING;
     const name = item.parentName || 'Parent';
-    const initials = name
-      .split(' ')
-      .filter(Boolean)
-      .map((part) => part[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase();
     const busy = actingId === item.id;
 
     return (
@@ -188,19 +200,27 @@ export default function MessagesScreen() {
           style={styles.requestHeader}
           onPress={() => setSelectedMatch(item)}
         >
-          <View style={[styles.avatar, styles.tutorAvatar]}>
-            <Text style={[styles.avatarText, styles.tutorAvatarText]}>
-              {initials}
-            </Text>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{getInitials(name)}</Text>
           </View>
           <View style={styles.rowBody}>
-            <Text style={styles.rowTitle}>{name}</Text>
-            <Text style={styles.rowSubtitle}>
+            <View style={styles.rowTitleRow}>
+              <Text style={styles.rowTitle} numberOfLines={1}>
+                {name}
+              </Text>
+              {pending ? (
+                <View style={styles.newPill}>
+                  <Text style={styles.newPillLabel}>Nouveau</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.rowSubtitle} numberOfLines={2}>
               {pending
                 ? 'Nouvelle demande — ouvrir pour répondre'
                 : 'Cours accepté · Appuyer pour discuter'}
             </Text>
           </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.mutedSoft} />
         </Pressable>
 
         {pending ? (
@@ -211,7 +231,7 @@ export default function MessagesScreen() {
               disabled={busy}
             >
               {busy ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color={colors.white} />
               ) : (
                 <Text style={styles.actionLabel}>Accepter la demande</Text>
               )}
@@ -229,6 +249,11 @@ export default function MessagesScreen() {
             style={styles.openChatBtn}
             onPress={() => setSelectedMatch(item)}
           >
+            <Ionicons
+              name="chatbubble-ellipses"
+              size={16}
+              color={colors.white}
+            />
             <Text style={styles.actionLabel}>Ouvrir la conversation</Text>
           </Pressable>
         )}
@@ -237,71 +262,115 @@ export default function MessagesScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.container}>
-        <Text style={styles.title}>
-          {isTutor ? 'Demandes' : 'Messages'}
-        </Text>
-        <Text style={styles.subtitle}>
-          {isTutor
-            ? 'Parents qui t’ont envoyé une demande de cours.'
-            : 'Tes conversations avec les tuteurs.'}
-        </Text>
+    <View style={styles.root}>
+      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
 
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#1B5E3B" />
-          </View>
-        ) : error ? (
-          <View style={styles.centered}>
-            <Text style={styles.error}>{error}</Text>
-            <Pressable style={styles.retry} onPress={loadMatches}>
-              <Text style={styles.retryLabel}>Réessayer</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <FlatList
-            data={matches}
-            keyExtractor={(item) => item.id}
-            renderItem={isTutor ? renderTutorMatch : renderParentMatch}
-            contentContainerStyle={
-              matches.length === 0 ? styles.emptyList : styles.list
-            }
-            ListEmptyComponent={
-              <Text style={styles.emptyText}>
-                {isTutor
-                  ? 'Aucune demande pour l’instant. Complète ton profil pour apparaître dans Découvrir.'
-                  : 'Aucune conversation. Envoie un message depuis Découvrir pour démarrer.'}
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.container}>
+          <View style={styles.topBar}>
+            <View style={styles.topBarText}>
+              <Text style={styles.eyebrow}>Clutch</Text>
+              <Text style={styles.title}>
+                {isTutor ? 'Demandes' : 'Messages'}
               </Text>
-            }
-          />
-        )}
-      </View>
-    </SafeAreaView>
+            </View>
+          </View>
+          <Text style={styles.subtitle}>
+            {isTutor
+              ? 'Parents qui t’ont envoyé une demande de cours.'
+              : 'Tes conversations avec les tuteurs.'}
+          </Text>
+
+          {loading ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={colors.mintDeep} />
+            </View>
+          ) : error ? (
+            <View style={styles.centered}>
+              <Text style={styles.error}>{error}</Text>
+              <Pressable style={styles.retry} onPress={loadMatches}>
+                <Text style={styles.retryLabel}>Réessayer</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <FlatList
+              data={matches}
+              keyExtractor={(item) => item.id}
+              renderItem={isTutor ? renderTutorMatch : renderParentMatch}
+              contentContainerStyle={
+                matches.length === 0 ? styles.emptyList : styles.list
+              }
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <View style={styles.emptyCard}>
+                  <View style={styles.emptyIcon}>
+                    <Ionicons
+                      name={isTutor ? 'mail-open-outline' : 'chatbubbles-outline'}
+                      size={28}
+                      color={colors.mintDeep}
+                    />
+                  </View>
+                  <Text style={styles.emptyText}>
+                    {isTutor
+                      ? 'Aucune demande pour l’instant. Complète ton profil pour apparaître dans Découvrir.'
+                      : 'Aucune conversation. Envoie un message depuis Découvrir pour démarrer.'}
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.page,
+  },
+  mintBand: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.mint,
+  },
   safe: {
     flex: 1,
-    backgroundColor: '#F3F6F4',
+    backgroundColor: 'transparent',
   },
   container: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  topBar: {
+    marginBottom: 6,
+    minHeight: 52,
+    justifyContent: 'center',
+  },
+  topBarText: {
+    gap: 2,
+  },
+  eyebrow: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    color: colors.mintDeep,
+    textTransform: 'uppercase',
   },
   title: {
     fontSize: 28,
-    fontWeight: '700',
-    color: '#10261C',
+    fontWeight: '800',
+    color: colors.ink,
   },
   subtitle: {
-    marginTop: 8,
     marginBottom: 18,
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#4A6357',
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.muted,
   },
   centered: {
     flex: 1,
@@ -310,37 +379,53 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   list: {
-    paddingBottom: 24,
+    paddingBottom: 28,
+    paddingTop: 4,
   },
   emptyList: {
     flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 40,
+  },
+  emptyCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    paddingVertical: 28,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+    gap: 14,
+    ...shadows.card,
+  },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.mintSoft,
+    alignItems: 'center',
     justifyContent: 'center',
   },
   emptyText: {
     textAlign: 'center',
     fontSize: 15,
-    lineHeight: 24,
-    color: '#7A9185',
-    paddingHorizontal: 12,
+    lineHeight: 23,
+    color: colors.muted,
   },
-  row: {
+  card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    padding: 16,
+    marginBottom: 12,
     gap: 12,
+    ...shadows.soft,
   },
   requestCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E2EAE5',
+    ...shadows.soft,
   },
   requestHeader: {
     flexDirection: 'row',
@@ -348,69 +433,100 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#D8EADF',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.mintSoft,
+    borderWidth: 3,
+    borderColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tutorAvatar: {
-    backgroundColor: '#E0E7FF',
-  },
   avatarText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#1B5E3B',
-  },
-  tutorAvatarText: {
-    color: '#4338CA',
+    fontWeight: '800',
+    color: colors.mintDeep,
   },
   rowBody: {
     flex: 1,
+    minWidth: 0,
+  },
+  rowTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   rowTitle: {
+    flexShrink: 1,
     fontSize: 17,
-    fontWeight: '700',
-    color: '#10261C',
+    fontWeight: '800',
+    color: colors.ink,
   },
   rowSubtitle: {
-    marginTop: 2,
-    fontSize: 14,
-    color: '#4A6357',
+    marginTop: 3,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
+  },
+  pendingPill: {
+    backgroundColor: '#FFF4D6',
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  pendingPillLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7A4E00',
+  },
+  newPill: {
+    backgroundColor: colors.badgeMint,
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  newPillLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.mintDeep,
   },
   actions: {
-    marginTop: 12,
+    marginTop: 14,
     gap: 8,
   },
   acceptBtn: {
-    backgroundColor: '#1B5E3B',
-    borderRadius: 12,
-    paddingVertical: 12,
+    backgroundColor: colors.mintDeep,
+    borderRadius: radii.button,
+    paddingVertical: 13,
     alignItems: 'center',
+    ...shadows.soft,
   },
   openChatBtn: {
-    marginTop: 12,
-    backgroundColor: '#4338CA',
-    borderRadius: 12,
-    paddingVertical: 12,
+    marginTop: 14,
+    backgroundColor: colors.mintDeep,
+    borderRadius: radii.button,
+    paddingVertical: 13,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    ...shadows.soft,
   },
   declineBtn: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: colors.white,
+    borderRadius: radii.button,
     paddingVertical: 12,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderWidth: 1.5,
+    borderColor: colors.border,
   },
   actionLabel: {
-    color: '#FFFFFF',
+    color: colors.white,
     fontWeight: '700',
     fontSize: 15,
   },
   declineLabel: {
-    color: '#6B7280',
+    color: colors.muted,
     fontWeight: '700',
     fontSize: 15,
   },
@@ -418,18 +534,19 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   error: {
-    color: '#C0392B',
+    color: colors.danger,
     textAlign: 'center',
     paddingHorizontal: 16,
+    fontSize: 15,
   },
   retry: {
-    backgroundColor: '#1B5E3B',
+    backgroundColor: colors.mintDeep,
     paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: radii.button,
   },
   retryLabel: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+    color: colors.white,
+    fontWeight: '700',
   },
 });

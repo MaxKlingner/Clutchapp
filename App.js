@@ -16,6 +16,8 @@ import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import TutorHomeScreen from './screens/TutorHomeScreen';
+import TutorProfileEditScreen from './screens/TutorProfileEditScreen';
+import { withTabSwipe } from './lib/withTabSwipe';
 import {
   clerkPublishableKey,
   isClerkConfigured,
@@ -28,47 +30,53 @@ import { setupPushNotificationsForUser } from './services/notifications';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+const ParentDiscover = withTabSwipe(SwipeScreen);
+const ParentMessages = withTabSwipe(MessagesScreen);
+const ParentWallet = withTabSwipe(WalletScreen);
+const TutorHome = withTabSwipe(TutorHomeScreen);
+const TutorMessages = withTabSwipe(MessagesScreen);
+const TutorWallet = withTabSwipe(WalletScreen);
+
+const tabScreenOptions = ({ route }) => ({
+  headerShown: false,
+  tabBarActiveTintColor: '#1B5E3B',
+  tabBarInactiveTintColor: '#7A9185',
+  tabBarStyle: {
+    backgroundColor: '#FFFFFF',
+    borderTopColor: '#E2EAE5',
+    paddingTop: 4,
+  },
+  tabBarLabelStyle: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  tabBarIcon: ({ color, size }) => {
+    const icons = {
+      Matchs: 'book',
+      TutorHome: 'school',
+      Messages: 'chatbubbles',
+      Wallet: 'wallet',
+    };
+    return <Ionicons name={icons[route.name]} size={size} color={color} />;
+  },
+});
+
 function ParentMainTabs() {
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: '#1B5E3B',
-        tabBarInactiveTintColor: '#7A9185',
-        tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#E2EAE5',
-          paddingTop: 4,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-        },
-        tabBarIcon: ({ color, size }) => {
-          const icons = {
-            Matchs: 'book',
-            Messages: 'chatbubbles',
-            Wallet: 'wallet',
-          };
-          return (
-            <Ionicons name={icons[route.name]} size={size} color={color} />
-          );
-        },
-      })}
-    >
+    <Tab.Navigator initialRouteName="Matchs" screenOptions={tabScreenOptions}>
       <Tab.Screen
         name="Matchs"
-        component={SwipeScreen}
+        component={ParentDiscover}
         options={{ title: 'Découvrir' }}
       />
       <Tab.Screen
         name="Messages"
-        component={MessagesScreen}
+        component={ParentMessages}
         options={{ title: 'Messages' }}
       />
       <Tab.Screen
         name="Wallet"
-        component={WalletScreen}
+        component={ParentWallet}
         options={{ title: 'Portefeuille' }}
       />
     </Tab.Navigator>
@@ -78,44 +86,22 @@ function ParentMainTabs() {
 function TutorMainTabs() {
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: '#4338CA',
-        tabBarInactiveTintColor: '#7A9185',
-        tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#E2EAE5',
-          paddingTop: 4,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-        },
-        tabBarIcon: ({ color, size }) => {
-          const icons = {
-            TutorHome: 'school',
-            Messages: 'chatbubbles',
-            Wallet: 'wallet',
-          };
-          return (
-            <Ionicons name={icons[route.name]} size={size} color={color} />
-          );
-        },
-      })}
+      initialRouteName="TutorHome"
+      screenOptions={tabScreenOptions}
     >
       <Tab.Screen
         name="TutorHome"
-        component={TutorHomeScreen}
+        component={TutorHome}
         options={{ title: 'Accueil' }}
       />
       <Tab.Screen
         name="Messages"
-        component={MessagesScreen}
+        component={TutorMessages}
         options={{ title: 'Demandes' }}
       />
       <Tab.Screen
         name="Wallet"
-        component={WalletScreen}
+        component={TutorWallet}
         options={{ title: 'Portefeuille' }}
       />
     </Tab.Navigator>
@@ -124,7 +110,10 @@ function TutorMainTabs() {
 
 function ParentTabs() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator
+      initialRouteName="MainTabs"
+      screenOptions={{ headerShown: false }}
+    >
       <Stack.Screen name="MainTabs" component={ParentMainTabs} />
       <Stack.Screen
         name="Settings"
@@ -137,11 +126,19 @@ function ParentTabs() {
 
 function TutorTabs() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator
+      initialRouteName="MainTabs"
+      screenOptions={{ headerShown: false }}
+    >
       <Stack.Screen name="MainTabs" component={TutorMainTabs} />
       <Stack.Screen
         name="Settings"
         component={ProfileScreen}
+        options={{ presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="EditTutorProfile"
+        component={TutorProfileEditScreen}
         options={{ presentation: 'modal' }}
       />
     </Stack.Navigator>
@@ -200,10 +197,10 @@ function RoleGate() {
   }
 
   if (role === ROLES.TUTOR) {
-    return <TutorTabs />;
+    return <TutorTabs key="tutor-tabs" />;
   }
 
-  return <ParentTabs />;
+  return <ParentTabs key="parent-tabs" />;
 }
 
 function RootNavigator() {

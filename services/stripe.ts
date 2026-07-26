@@ -63,36 +63,65 @@ function isPrivateOrLocalUrl(raw: string): boolean {
   }
 }
 
+function resolveBackendUrl(): string {
+  const configured = readEnv('EXPO_PUBLIC_STRIPE_BACKEND_URL').replace(
+    /\/$/,
+    ''
+  );
+  const supabaseUrl = readEnv('EXPO_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+  const edgeFallback = supabaseUrl
+    ? `${supabaseUrl}/functions/v1/stripe`
+    : '';
+
+  // Builds store / TestFlight : jamais de localhost/LAN.
+  if (!__DEV__) {
+    if (configured && !isPrivateOrLocalUrl(configured)) {
+      return configured;
+    }
+    if (edgeFallback) {
+      return edgeFallback;
+    }
+    throw new Error(
+      'Backend Stripe manquant pour TestFlight. Définis EXPO_PUBLIC_SUPABASE_URL ' +
+        'ou EXPO_PUBLIC_STRIPE_BACKEND_URL (HTTPS) dans les secrets EAS preview/production.'
+    );
+  }
+
+  // Dev : localhost OK si configuré
+  if (configured) return configured;
+  if (edgeFallback) return edgeFallback;
+  throw new Error(
+    'EXPO_PUBLIC_STRIPE_BACKEND_URL manquant. En local: npm run stripe:server. ' +
+      'Sinon pointe vers l’Edge Function HTTPS Supabase.'
+  );
+}
+
 export const stripeConfig = {
   publishableKey: readEnv('EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY'),
-  backendUrl: readEnv('EXPO_PUBLIC_STRIPE_BACKEND_URL').replace(/\/$/, ''),
   supabaseUrl: readEnv('EXPO_PUBLIC_SUPABASE_URL').replace(/\/$/, ''),
   supabaseAnonKey: readEnv('EXPO_PUBLIC_SUPABASE_ANON_KEY'),
+  get backendUrl() {
+    try {
+      return resolveBackendUrl();
+    } catch {
+      return readEnv('EXPO_PUBLIC_STRIPE_BACKEND_URL').replace(/\/$/, '');
+    }
+  },
   get ready() {
-    return Boolean(this.publishableKey && this.backendUrl);
+    try {
+      return Boolean(this.publishableKey && resolveBackendUrl());
+    } catch {
+      return false;
+    }
   },
   get usesPrivateBackend() {
-    return Boolean(this.backendUrl) && isPrivateOrLocalUrl(this.backendUrl);
+    const url = this.backendUrl;
+    return Boolean(url) && isPrivateOrLocalUrl(url);
   },
 };
 
 function requireBackendUrl(): string {
-  if (!stripeConfig.backendUrl) {
-    throw new Error(
-      'EXPO_PUBLIC_STRIPE_BACKEND_URL manquant. En local: npm run stripe:server. Sur TestFlight: pointe vers l’Edge Function HTTPS Supabase.'
-    );
-  }
-
-  // Standalone / store builds cannot reach LAN or localhost.
-  if (!__DEV__ && stripeConfig.usesPrivateBackend) {
-    throw new Error(
-      `Backend Stripe inaccessible en build store (${stripeConfig.backendUrl}). ` +
-        'Définis EXPO_PUBLIC_STRIPE_BACKEND_URL sur une URL HTTPS publique ' +
-        '(ex. https://<project>.supabase.co/functions/v1/stripe) dans les secrets EAS preview/production.'
-    );
-  }
-
-  return stripeConfig.backendUrl;
+  return resolveBackendUrl();
 }
 
 function buildHeaders(): Record<string, string> {
