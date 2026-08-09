@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 
 import SwipeScreen from './screens/SwipeScreen';
+import FavoritesScreen from './screens/FavoritesScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import WalletScreen from './screens/WalletScreen';
 import ProfileScreen from './screens/ProfileScreen';
@@ -31,6 +32,7 @@ const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 const ParentDiscover = withTabSwipe(SwipeScreen);
+const ParentFavorites = withTabSwipe(FavoritesScreen);
 const ParentMessages = withTabSwipe(MessagesScreen);
 const ParentWallet = withTabSwipe(WalletScreen);
 const TutorHome = withTabSwipe(TutorHomeScreen);
@@ -53,6 +55,7 @@ const tabScreenOptions = ({ route }) => ({
   tabBarIcon: ({ color, size }) => {
     const icons = {
       Matchs: 'book',
+      Favorites: 'heart',
       TutorHome: 'school',
       Messages: 'chatbubbles',
       Wallet: 'wallet',
@@ -68,6 +71,11 @@ function ParentMainTabs() {
         name="Matchs"
         component={ParentDiscover}
         options={{ title: 'Découvrir' }}
+      />
+      <Tab.Screen
+        name="Favorites"
+        component={ParentFavorites}
+        options={{ title: 'Favoris' }}
       />
       <Tab.Screen
         name="Messages"

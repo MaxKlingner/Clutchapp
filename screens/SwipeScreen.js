@@ -22,7 +22,9 @@ import {
   fetchTutorProfiles,
   startTutorConversation,
 } from '../lib/supabase';
-import { MATCH_STATUS, SWIPE_FILTERS } from '../lib/tutorConstants';
+import { MATCH_STATUS, SWIPE_FILTERS, TEACHING_FORMATS } from '../lib/tutorConstants';
+import { DISTANCE_OPTIONS, tutorMatchesLocation } from '../lib/geo';
+import { useFavoriteTutors } from '../hooks/useFavoriteTutors';
 
 const SCREEN_H = Dimensions.get('window').height;
 const MINT_BAND_H = Math.round(SCREEN_H * 0.22);
@@ -61,6 +63,13 @@ function getLessonsGiven(tutor) {
 export default function SwipeScreen() {
   const { userId } = useAuth();
   const navigation = useNavigation();
+  const {
+    isFavorite,
+    isToggling,
+    toggleFavorite,
+    reload: reloadFavorites,
+    error: favoriteError,
+  } = useFavoriteTutors();
   const [allTutors, setAllTutors] = useState([]);
   const [index, setIndex] = useState(0);
   const [liked, setLiked] = useState([]);
@@ -69,6 +78,9 @@ export default function SwipeScreen() {
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
   const [activeFilter, setActiveFilter] = useState(null);
+  const [cityQuery, setCityQuery] = useState('');
+  const [radiusKm, setRadiusKm] = useState(null);
+  const [formatFilters, setFormatFilters] = useState([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [messageModalOpen, setMessageModalOpen] = useState(false);
@@ -130,31 +142,93 @@ export default function SwipeScreen() {
   useFocusEffect(
     useCallback(() => {
       loadTutors();
+      reloadFavorites();
     }, [userId])
   );
 
-  const tutors = useMemo(() => {
-    if (!activeFilter) return allTutors;
-    const needle = activeFilter.toLowerCase();
-    return allTutors.filter((tutor) =>
-      (tutor.specialties ?? []).some(
-        (skill) => String(skill).toLowerCase() === needle
-      )
-    );
-  }, [allTutors, activeFilter]);
+  const hasActiveFilters =
+    Boolean(activeFilter) ||
+    Boolean(cityQuery.trim()) ||
+    radiusKm != null ||
+    formatFilters.length > 0;
 
-  function onSelectFilter(label) {
-    setActiveFilter((prev) => (prev === label ? null : label));
+  const tutors = useMemo(() => {
+    return allTutors.filter((tutor) => {
+      if (activeFilter) {
+        const needle = activeFilter.toLowerCase();
+        const specialtyOk = (tutor.specialties ?? []).some(
+          (skill) => String(skill).toLowerCase() === needle
+        );
+        if (!specialtyOk) return false;
+      }
+
+      if (!tutorMatchesLocation(tutor, cityQuery, radiusKm)) {
+        return false;
+      }
+
+      if (formatFilters.length > 0) {
+        const formats = tutor.teachingFormats ?? [];
+        const formatOk = formatFilters.every((fmt) => formats.includes(fmt));
+        if (!formatOk) return false;
+      }
+
+      return true;
+    });
+  }, [allTutors, activeFilter, cityQuery, radiusKm, formatFilters]);
+
+  function resetDeck() {
     setIndex(0);
     setLiked([]);
     setPassed([]);
     setActionError(null);
   }
 
+  function onSelectFilter(label) {
+    setActiveFilter((prev) => (prev === label ? null : label));
+    resetDeck();
+  }
+
+  function onSelectRadius(value) {
+    setRadiusKm(value);
+    resetDeck();
+  }
+
+  function onToggleFormatFilter(format) {
+    setFormatFilters((prev) =>
+      prev.includes(format)
+        ? prev.filter((item) => item !== format)
+        : [...prev, format]
+    );
+    resetDeck();
+  }
+
+  function clearAllFilters() {
+    setActiveFilter(null);
+    setCityQuery('');
+    setRadiusKm(null);
+    setFormatFilters([]);
+    resetDeck();
+  }
+
   const tutor = tutors[index];
   const isDone = !loading && !error && index >= tutors.length;
   const lessonsGiven = tutor ? getLessonsGiven(tutor) : 0;
   const displayFirstName = tutor ? firstName(tutor.name) : '';
+  const tutorIsFavorite = tutor ? isFavorite(tutor.id) : false;
+
+  async function onToggleFavorite() {
+    if (!tutor || isToggling(tutor.id)) return;
+    try {
+      const nowFavorite = await toggleFavorite(tutor.id);
+      showToast(
+        nowFavorite
+          ? 'Tuteur ajouté à tes favoris.'
+          : 'Tuteur retiré de tes favoris.'
+      );
+    } catch (err) {
+      setActionError(err?.message ?? favoriteError ?? 'Action favori impossible.');
+    }
+  }
 
   function openMessageModal() {
     if (!tutor || sendingRequest) return;
@@ -238,17 +312,20 @@ export default function SwipeScreen() {
               <Pressable
                 style={[
                   styles.headerIconButton,
-                  (filtersOpen || activeFilter) && styles.headerIconButtonActive,
+                  (filtersOpen || hasActiveFilters) &&
+                    styles.headerIconButtonActive,
                 ]}
                 onPress={() => setFiltersOpen((open) => !open)}
-                accessibilityLabel="Filtres matières"
+                accessibilityLabel="Filtres de recherche"
                 hitSlop={8}
               >
                 <Ionicons
-                  name={filtersOpen ? 'close' : 'search'}
+                  name={filtersOpen ? 'close' : 'options-outline'}
                   size={22}
                   color={
-                    filtersOpen || activeFilter ? colors.white : colors.mintDeep
+                    filtersOpen || hasActiveFilters
+                      ? colors.white
+                      : colors.mintDeep
                   }
                 />
               </Pressable>
@@ -377,10 +454,16 @@ export default function SwipeScreen() {
 
           {filtersOpen ? (
             <View style={styles.filtersBlock}>
-              <Text style={styles.filtersLabel}>
-                Filtres matières
-                {activeFilter ? ` · ${activeFilter}` : ''}
-              </Text>
+              <View style={styles.filtersHeaderRow}>
+                <Text style={styles.filtersLabel}>Filtres</Text>
+                {hasActiveFilters ? (
+                  <Pressable onPress={clearAllFilters} hitSlop={8}>
+                    <Text style={styles.clearFiltersLabel}>Tout effacer</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+
+              <Text style={styles.filterSectionLabel}>Matières</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -426,6 +509,82 @@ export default function SwipeScreen() {
                   );
                 })}
               </ScrollView>
+
+              <Text style={styles.filterSectionLabel}>Ville / code postal</Text>
+              <TextInput
+                style={styles.cityInput}
+                value={cityQuery}
+                onChangeText={(text) => {
+                  setCityQuery(text);
+                  resetDeck();
+                }}
+                placeholder="Ex. Ottignies-Louvain-la-Neuve ou 1348"
+                placeholderTextColor={colors.mutedSoft}
+                autoCapitalize="words"
+                autoCorrect={false}
+              />
+
+              <Text style={styles.filterSectionLabel}>Distance</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.filterRow}
+              >
+                {DISTANCE_OPTIONS.map((option) => {
+                  const active = radiusKm === option.value;
+                  return (
+                    <Pressable
+                      key={option.label}
+                      style={[
+                        styles.filterChip,
+                        active && styles.filterChipActive,
+                      ]}
+                      onPress={() => onSelectRadius(option.value)}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipLabel,
+                          active && styles.filterChipLabelActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={styles.filterSectionLabel}>Format de cours</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.filterRow}
+              >
+                {TEACHING_FORMATS.map((format) => {
+                  const active = formatFilters.includes(format);
+                  return (
+                    <Pressable
+                      key={format}
+                      style={[
+                        styles.filterChip,
+                        active && styles.filterChipActive,
+                      ]}
+                      onPress={() => onToggleFormatFilter(format)}
+                    >
+                      <Text
+                        style={[
+                          styles.filterChipLabel,
+                          active && styles.filterChipLabelActive,
+                        ]}
+                      >
+                        {format}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </View>
           ) : null}
 
@@ -450,8 +609,8 @@ export default function SwipeScreen() {
                 </Text>
                 <Text style={styles.emptyText}>
                   {tutors.length === 0
-                    ? activeFilter
-                      ? `Aucun tuteur avec la spécialité « ${activeFilter} ». Essaie un autre filtre.`
+                    ? hasActiveFilters
+                      ? 'Aucun tuteur ne correspond à tes filtres. Élargis la ville, la distance ou le format.'
                       : 'Tous les tuteurs sont déjà matchés, ou aucun profil n’est disponible.'
                     : `Demandes : ${liked.length || 0}\nPassés : ${passed.length || 0}\n\nRetrouve tes conversations dans Messages.`}
                 </Text>
@@ -459,16 +618,16 @@ export default function SwipeScreen() {
                   style={styles.retryButton}
                   onPress={
                     tutors.length === 0
-                      ? activeFilter
-                        ? () => onSelectFilter(null)
+                      ? hasActiveFilters
+                        ? clearAllFilters
                         : loadTutors
                       : reset
                   }
                 >
                   <Text style={styles.retryLabel}>
                     {tutors.length === 0
-                      ? activeFilter
-                        ? 'Voir tous'
+                      ? hasActiveFilters
+                        ? 'Effacer les filtres'
                         : 'Réessayer'
                       : 'Recommencer'}
                   </Text>
@@ -501,9 +660,46 @@ export default function SwipeScreen() {
                           ? tutor.rating.toFixed(1)
                           : '—'}
                       </Text>
+                      <Pressable
+                        style={styles.favoriteButton}
+                        onPress={onToggleFavorite}
+                        disabled={isToggling(tutor.id)}
+                        accessibilityLabel={
+                          tutorIsFavorite
+                            ? 'Retirer des favoris'
+                            : 'Ajouter aux favoris'
+                        }
+                        hitSlop={8}
+                      >
+                        {isToggling(tutor.id) ? (
+                          <ActivityIndicator
+                            size="small"
+                            color={colors.danger}
+                          />
+                        ) : (
+                          <Ionicons
+                            name={tutorIsFavorite ? 'heart' : 'heart-outline'}
+                            size={22}
+                            color={
+                              tutorIsFavorite ? colors.danger : colors.mintDeep
+                            }
+                          />
+                        )}
+                      </Pressable>
                     </View>
                     {tutor.studyYear ? (
                       <Text style={styles.studyYear}>{tutor.studyYear}</Text>
+                    ) : null}
+                    {tutor.city ? (
+                      <Text style={styles.locationLine} numberOfLines={1}>
+                        <Ionicons
+                          name="location-outline"
+                          size={13}
+                          color={colors.muted}
+                        />{' '}
+                        {tutor.city}
+                        {tutor.postalCode ? ` (${tutor.postalCode})` : ''}
+                      </Text>
                     ) : null}
                   </View>
                 </View>
@@ -514,6 +710,19 @@ export default function SwipeScreen() {
                   showsVerticalScrollIndicator={false}
                   nestedScrollEnabled
                 >
+                  {(tutor.teachingFormats?.length ?? 0) > 0 ? (
+                    <View style={styles.specialtyWrap}>
+                      {tutor.teachingFormats.map((format) => (
+                        <View
+                          key={`${tutor.id}-fmt-${format}`}
+                          style={styles.formatChip}
+                        >
+                          <Text style={styles.formatChipLabel}>{format}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
                   <View style={styles.specialtyWrap}>
                     {(tutor.specialties?.length
                       ? tutor.specialties
@@ -695,19 +904,48 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 8,
     zIndex: 9,
+    gap: 4,
+  },
+  filtersHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
   },
   filtersLabel: {
-    marginBottom: 6,
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.4,
     color: colors.mintDeep,
     textTransform: 'uppercase',
   },
+  clearFiltersLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.mintDeep,
+  },
+  filterSectionLabel: {
+    marginTop: 8,
+    marginBottom: 6,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+  },
   filterRow: {
     flexDirection: 'row',
     gap: 8,
     paddingRight: 8,
+  },
+  cityInput: {
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderWidth: 1.5,
+    borderColor: colors.mintDeep,
+    borderRadius: radii.button,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.ink,
+    marginBottom: 2,
   },
   filterChip: {
     borderRadius: radii.pill,
@@ -727,6 +965,31 @@ const styles = StyleSheet.create({
   },
   filterChipLabelActive: {
     color: colors.white,
+  },
+  favoriteButton: {
+    marginLeft: 'auto',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.badgeMint,
+  },
+  locationLine: {
+    marginTop: 4,
+    fontSize: 13,
+    color: colors.muted,
+  },
+  formatChip: {
+    backgroundColor: colors.badgeMint,
+    borderRadius: radii.chip,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  formatChipLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.mintDeep,
   },
   cardStage: {
     flex: 1,

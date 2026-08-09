@@ -19,7 +19,9 @@ import {
   HOURLY_RATES,
   SPECIALTIES,
   STUDY_YEARS,
+  TEACHING_FORMATS,
 } from '../lib/tutorConstants';
+import { BELGIAN_LOCATIONS, resolveLocationQuery } from '../lib/geo';
 import {
   ensureTutorProfile,
   updateTutorProfile,
@@ -72,8 +74,13 @@ export default function TutorProfileEditor() {
   const [fullName, setFullName] = useState('');
   const [bio, setBio] = useState('');
   const [specialties, setSpecialties] = useState([]);
+  const [teachingFormats, setTeachingFormats] = useState([]);
   const [hourlyRate, setHourlyRate] = useState(25);
   const [studyYear, setStudyYear] = useState('Master 1');
+  const [city, setCity] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [latitude, setLatitude] = useState(null);
+  const [longitude, setLongitude] = useState(null);
   const [avatarUri, setAvatarUri] = useState(null);
   const [avatarRemoved, setAvatarRemoved] = useState(false);
   const [avatarUrlDraft, setAvatarUrlDraft] = useState('');
@@ -102,8 +109,15 @@ export default function TutorProfileEditor() {
       setFullName(profile.name || defaultName);
       setBio(profile.bio || '');
       setSpecialties(profile.specialties?.length ? profile.specialties : []);
+      setTeachingFormats(
+        profile.teachingFormats?.length ? profile.teachingFormats : []
+      );
       setHourlyRate(profile.hourlyRate || 25);
       setStudyYear(profile.studyYear || 'Master 1');
+      setCity(profile.city || '');
+      setPostalCode(profile.postalCode || '');
+      setLatitude(profile.latitude ?? null);
+      setLongitude(profile.longitude ?? null);
       setAvatarUri(profile.avatarUrl || null);
       setAvatarUrlDraft('');
       setAvatarRemoved(false);
@@ -126,6 +140,34 @@ export default function TutorProfileEditor() {
         ? prev.filter((item) => item !== label)
         : [...prev, label]
     );
+  }
+
+  function toggleTeachingFormat(label) {
+    setTeachingFormats((prev) =>
+      prev.includes(label)
+        ? prev.filter((item) => item !== label)
+        : [...prev, label]
+    );
+  }
+
+  function applyResolvedLocation(query) {
+    const resolved = resolveLocationQuery(query);
+    if (!resolved) return false;
+    setCity(resolved.name);
+    const match = BELGIAN_LOCATIONS.find((loc) => loc.name === resolved.name);
+    if (match?.postalCodes?.[0]) {
+      setPostalCode(match.postalCodes[0]);
+    }
+    setLatitude(resolved.latitude);
+    setLongitude(resolved.longitude);
+    return true;
+  }
+
+  function selectPresetCity(loc) {
+    setCity(loc.name);
+    setPostalCode(loc.postalCodes?.[0] || '');
+    setLatitude(loc.latitude);
+    setLongitude(loc.longitude);
   }
 
   async function pickAvatarFromGallery() {
@@ -218,16 +260,51 @@ export default function TutorProfileEditor() {
       );
       return;
     }
+    if (!teachingFormats.length) {
+      Alert.alert(
+        'Formats de cours',
+        'Choisis au moins un format (présentiel, domicile ou en ligne).'
+      );
+      return;
+    }
+    if (!city.trim()) {
+      Alert.alert(
+        'Ville requise',
+        'Indique ta ville pour apparaître dans les filtres de proximité.'
+      );
+      return;
+    }
 
     setSaving(true);
     setError('');
     try {
+      let nextLat = latitude;
+      let nextLng = longitude;
+      let nextCity = city.trim();
+      let nextPostal = postalCode.trim();
+
+      const resolved = resolveLocationQuery(nextCity) || resolveLocationQuery(nextPostal);
+      if (resolved) {
+        nextCity = resolved.name;
+        nextLat = resolved.latitude;
+        nextLng = resolved.longitude;
+        const match = BELGIAN_LOCATIONS.find((loc) => loc.name === resolved.name);
+        if (!nextPostal && match?.postalCodes?.[0]) {
+          nextPostal = match.postalCodes[0];
+        }
+      }
+
       const updates = {
         fullName,
         bio,
         specialties,
+        teachingFormats,
         hourlyRate,
         studyYear,
+        city: nextCity,
+        postalCode: nextPostal,
+        latitude: nextLat,
+        longitude: nextLng,
       };
 
       if (avatarRemoved) {
@@ -243,6 +320,11 @@ export default function TutorProfileEditor() {
       setAvatarUri(saved.avatarUrl || null);
       setAvatarRemoved(false);
       setAvatarUrlDraft('');
+      setCity(saved.city || nextCity);
+      setPostalCode(saved.postalCode || nextPostal);
+      setLatitude(saved.latitude ?? nextLat);
+      setLongitude(saved.longitude ?? nextLng);
+      setTeachingFormats(saved.teachingFormats || teachingFormats);
       Alert.alert(
         'Profil sauvegardé',
         'Tes infos sont visibles dans le swipe des parents.'
@@ -390,6 +472,73 @@ export default function TutorProfileEditor() {
         })}
       </View>
 
+      <Text style={styles.label}>Formats de cours</Text>
+      <View style={styles.chipWrap}>
+        {TEACHING_FORMATS.map((item) => {
+          const active = teachingFormats.includes(item);
+          return (
+            <Pressable
+              key={item}
+              style={[styles.chip, active && styles.chipActive]}
+              onPress={() => toggleTeachingFormat(item)}
+              disabled={saving}
+            >
+              <Text
+                style={[styles.chipLabel, active && styles.chipLabelActive]}
+              >
+                {item}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Text style={styles.label}>Ville</Text>
+      <TextInput
+        style={styles.input}
+        value={city}
+        onChangeText={setCity}
+        onBlur={() => {
+          if (city.trim()) applyResolvedLocation(city);
+        }}
+        placeholder="Ex. Ottignies-Louvain-la-Neuve"
+        placeholderTextColor="#7A9185"
+        editable={!saving}
+      />
+      <Text style={styles.label}>Code postal</Text>
+      <TextInput
+        style={styles.input}
+        value={postalCode}
+        onChangeText={setPostalCode}
+        onBlur={() => {
+          if (postalCode.trim()) applyResolvedLocation(postalCode);
+        }}
+        placeholder="Ex. 1348"
+        placeholderTextColor="#7A9185"
+        keyboardType="number-pad"
+        editable={!saving}
+      />
+      <Text style={styles.hintSmall}>Suggestions rapides</Text>
+      <View style={styles.chipWrap}>
+        {BELGIAN_LOCATIONS.slice(0, 5).map((loc) => {
+          const active = city === loc.name;
+          return (
+            <Pressable
+              key={loc.name}
+              style={[styles.chip, active && styles.chipActive]}
+              onPress={() => selectPresetCity(loc)}
+              disabled={saving}
+            >
+              <Text
+                style={[styles.chipLabel, active && styles.chipLabelActive]}
+              >
+                {loc.name}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <Text style={styles.label}>Biographie</Text>
       <TextInput
         style={[styles.input, styles.bioInput]}
@@ -504,6 +653,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: '#3D5C4C',
+  },
+  hintSmall: {
+    marginTop: 6,
+    marginBottom: 6,
+    fontSize: 12,
+    color: '#4A6357',
   },
   label: {
     marginTop: 10,
