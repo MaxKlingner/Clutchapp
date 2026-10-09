@@ -505,20 +505,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.4,
-    color: colors.mintDeep,
+    color: 'rgba(255,255,255,0.82)',
     textTransform: 'uppercase',
   },
   title: {
     marginTop: 2,
     fontSize: 28,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   subtitle: {
     marginBottom: 18,
     fontSize: 15,
     lineHeight: 22,
-    color: colors.muted,
+    color: 'rgba(255,255,255,0.92)',
   },
   walletCard: {
     backgroundColor: colors.card,

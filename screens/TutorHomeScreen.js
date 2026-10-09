@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -124,7 +123,6 @@ export default function TutorHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dashboard, setDashboard] = useState(null);
-  const [aboutOpen, setAboutOpen] = useState(false);
 
   const isTutor = role === ROLES.TUTOR;
 
@@ -214,18 +212,6 @@ export default function TutorHomeScreen() {
             <View style={styles.topBarActions}>
               <Pressable
                 style={styles.headerIconButton}
-                onPress={() => setAboutOpen(true)}
-                accessibilityLabel="À propos de Clutch"
-                hitSlop={8}
-              >
-                <Ionicons
-                  name="help-circle-outline"
-                  size={24}
-                  color={colors.mintDeep}
-                />
-              </Pressable>
-              <Pressable
-                style={styles.headerIconButton}
                 onPress={() => navigation.navigate('Settings')}
                 accessibilityLabel="Réglages"
                 hitSlop={8}
@@ -233,48 +219,11 @@ export default function TutorHomeScreen() {
                 <Ionicons
                   name="settings-outline"
                   size={22}
-                  color={colors.mintDeep}
+                  color={colors.white}
                 />
               </Pressable>
             </View>
           </View>
-
-          <Modal
-            visible={aboutOpen}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setAboutOpen(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <Pressable
-                style={styles.modalBackdrop}
-                onPress={() => setAboutOpen(false)}
-              />
-              <View style={styles.modalCard}>
-                <Text style={styles.modalTitle}>À propos de Clutch</Text>
-                <Text style={styles.modalSectionLabel}>Notre mission</Text>
-                <Text style={styles.modalBody}>
-                  Clutch rend le soutien scolaire accessible en mettant en
-                  relation directe parents, étudiants et tuteurs. Transparence
-                  sur les profils, les tarifs et les avis : tu choisis le bon
-                  accompagnement sans friction.
-                </Text>
-                <Text style={styles.modalSectionLabel}>Le projet</Text>
-                <Text style={styles.modalBody}>
-                  Né d’une ambition simple : fluidifier la recherche de tuteurs
-                  et valoriser les étudiants qui enseignent. Clutch veut devenir
-                  le réflexe pour trouver, matcher et progresser — efficacement
-                  et en confiance.
-                </Text>
-                <Pressable
-                  style={styles.modalCloseButton}
-                  onPress={() => setAboutOpen(false)}
-                >
-                  <Text style={styles.modalCloseLabel}>Fermer</Text>
-                </Pressable>
-              </View>
-            </View>
-          </Modal>
 
           {loading ? (
             <View style={styles.centered}>
@@ -494,13 +443,13 @@ const styles = StyleSheet.create({
   hello: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.muted,
+    color: 'rgba(255,255,255,0.82)',
   },
   name: {
     marginTop: 2,
     fontSize: 28,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   topBarActions: {
     flexDirection: 'row',
@@ -513,7 +462,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.65)',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.38)',
   },
   modalOverlay: {
     flex: 1,

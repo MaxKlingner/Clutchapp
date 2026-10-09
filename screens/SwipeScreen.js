@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +26,7 @@ import { MATCH_STATUS, SWIPE_FILTERS, TEACHING_FORMATS } from '../lib/tutorConst
 import { DISTANCE_OPTIONS, tutorMatchesLocation } from '../lib/geo';
 import { useFavoriteTutors } from '../hooks/useFavoriteTutors';
 
+const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
 const MINT_BAND_H = Math.round(SCREEN_H * 0.22);
 
@@ -82,12 +83,15 @@ export default function SwipeScreen() {
   const [radiusKm, setRadiusKm] = useState(null);
   const [formatFilters, setFormatFilters] = useState([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [messageModalOpen, setMessageModalOpen] = useState(false);
   const [messageDraft, setMessageDraft] = useState('');
   const [sendingRequest, setSendingRequest] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+  const [pageWidth, setPageWidth] = useState(SCREEN_W - 40);
   const toastTimerRef = useRef(null);
+  const pagerRef = useRef(null);
+  const pageWidthRef = useRef(SCREEN_W - 40);
 
   useEffect(() => {
     return () => {
@@ -176,11 +180,37 @@ export default function SwipeScreen() {
     });
   }, [allTutors, activeFilter, cityQuery, radiusKm, formatFilters]);
 
+  function scrollToTutor(next, animated = true) {
+    const max = Math.max(tutors.length - 1, 0);
+    const clamped = Math.max(0, Math.min(next, max));
+    setIndex(clamped);
+    const width = pageWidthRef.current;
+    if (width > 0) {
+      pagerRef.current?.scrollTo({ x: clamped * width, animated });
+    }
+  }
+
   function resetDeck() {
     setIndex(0);
     setLiked([]);
     setPassed([]);
     setActionError(null);
+    pagerRef.current?.scrollTo({ x: 0, animated: false });
+  }
+
+  function onStageLayout(event) {
+    const width = Math.round(event.nativeEvent.layout.width);
+    if (!width || width === pageWidthRef.current) return;
+    pageWidthRef.current = width;
+    setPageWidth(width);
+    pagerRef.current?.scrollTo({ x: index * width, animated: false });
+  }
+
+  function onTutorPageSettled(event) {
+    const width = pageWidthRef.current;
+    if (!width) return;
+    const next = Math.round(event.nativeEvent.contentOffset.x / width);
+    if (next !== index) setIndex(next);
   }
 
   function onSelectFilter(label) {
@@ -211,15 +241,12 @@ export default function SwipeScreen() {
   }
 
   const tutor = tutors[index];
-  const isDone = !loading && !error && index >= tutors.length;
-  const lessonsGiven = tutor ? getLessonsGiven(tutor) : 0;
-  const displayFirstName = tutor ? firstName(tutor.name) : '';
-  const tutorIsFavorite = tutor ? isFavorite(tutor.id) : false;
+  const isDone = !loading && !error && tutors.length === 0;
 
-  async function onToggleFavorite() {
-    if (!tutor || isToggling(tutor.id)) return;
+  async function onToggleFavorite(target = tutor) {
+    if (!target || isToggling(target.id)) return;
     try {
-      const nowFavorite = await toggleFavorite(tutor.id);
+      const nowFavorite = await toggleFavorite(target.id);
       showToast(
         nowFavorite
           ? 'Tuteur ajouté à tes favoris.'
@@ -228,6 +255,12 @@ export default function SwipeScreen() {
     } catch (err) {
       setActionError(err?.message ?? favoriteError ?? 'Action favori impossible.');
     }
+  }
+
+  function openDetails() {
+    if (!tutor) return;
+    setActionError(null);
+    setDetailOpen(true);
   }
 
   function openMessageModal() {
@@ -261,7 +294,8 @@ export default function SwipeScreen() {
       });
       setLiked((prev) => [...prev, tutor.name]);
       setMessageModalOpen(false);
-      setIndex((prev) => prev + 1);
+      setDetailOpen(false);
+      scrollToTutor(index + 1);
       showToast(
         'Message envoyé ! Retrouve la discussion dans l’onglet Messages.'
       );
@@ -270,18 +304,6 @@ export default function SwipeScreen() {
     } finally {
       setSendingRequest(false);
     }
-  }
-
-  async function goNext(action) {
-    if (!tutor || sendingRequest) return;
-    if (action === 'like') {
-      openMessageModal();
-      return;
-    }
-
-    setActionError(null);
-    setPassed((prev) => [...prev, tutor.name]);
-    setIndex((prev) => prev + 1);
   }
 
   const reset = () => {
@@ -322,27 +344,11 @@ export default function SwipeScreen() {
                 <Ionicons
                   name={filtersOpen ? 'close' : 'options-outline'}
                   size={22}
-                  color={
-                    filtersOpen || hasActiveFilters
-                      ? colors.white
-                      : colors.mintDeep
-                  }
+                  color={colors.white}
                 />
               </Pressable>
             </View>
             <View style={[styles.topBarSide, styles.topBarSideRight]}>
-              <Pressable
-                style={styles.headerIconButton}
-                onPress={() => setAboutOpen(true)}
-                accessibilityLabel="À propos de Clutch"
-                hitSlop={8}
-              >
-                <Ionicons
-                  name="help-circle-outline"
-                  size={24}
-                  color={colors.mintDeep}
-                />
-              </Pressable>
               <Pressable
                 style={styles.headerIconButton}
                 onPress={() => navigation.navigate('Settings')}
@@ -352,47 +358,199 @@ export default function SwipeScreen() {
                 <Ionicons
                   name="settings-outline"
                   size={22}
-                  color={colors.mintDeep}
+                  color={colors.white}
                 />
               </Pressable>
             </View>
           </View>
 
           <Modal
-            visible={aboutOpen}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setAboutOpen(false)}
+            visible={detailOpen}
+            animationType="slide"
+            statusBarTranslucent={false}
+            onRequestClose={() => {
+              if (!sendingRequest) setDetailOpen(false);
+            }}
           >
-            <View style={styles.modalOverlay}>
-              <Pressable
-                style={styles.modalBackdrop}
-                onPress={() => setAboutOpen(false)}
-              />
-              <View style={styles.modalCard}>
-                <Text style={styles.modalTitle}>À propos de Clutch</Text>
-                <Text style={styles.modalSectionLabel}>Notre mission</Text>
-                <Text style={styles.modalBody}>
-                  Clutch rend le soutien scolaire accessible en mettant en
-                  relation directe parents, étudiants et tuteurs. Transparence
-                  sur les profils, les tarifs et les avis : tu choisis le bon
-                  accompagnement sans friction.
-                </Text>
-                <Text style={styles.modalSectionLabel}>Le projet</Text>
-                <Text style={styles.modalBody}>
-                  Né d’une ambition simple : fluidifier la recherche de tuteurs
-                  et valoriser les étudiants qui enseignent. Clutch veut devenir
-                  le réflexe pour trouver, matcher et progresser — efficacement
-                  et en confiance.
-                </Text>
+            <SafeAreaProvider initialMetrics={initialWindowMetrics} style={styles.detailProvider}>
+            <View style={styles.root}>
+              <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
+              <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+                <View style={styles.detailHeader}>
+                  <Pressable
+                    style={styles.headerIconButton}
+                    onPress={() => setDetailOpen(false)}
+                    disabled={sendingRequest}
+                    accessibilityLabel="Retour"
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name="chevron-back"
+                      size={22}
+                      color={colors.white}
+                    />
+                  </Pressable>
+                  <Text style={styles.detailTitle}>Profil</Text>
+                  <View style={styles.detailHeaderSpacer} />
+                </View>
+
+                {tutor ? (
+                  <ScrollView
+                    style={styles.detailScroll}
+                    contentContainerStyle={styles.detailContent}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <View style={[styles.card, styles.detailCard]}>
+                      <View style={styles.cardHeader}>
+                        <View style={styles.avatar}>
+                          {tutor.avatarUrl ? (
+                            <Image
+                              source={{ uri: tutor.avatarUrl }}
+                              style={styles.avatarImage}
+                            />
+                          ) : (
+                            <Text style={styles.avatarText}>
+                              {getInitials(tutor.name)}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={styles.headerMain}>
+                          <View style={styles.nameRatingRow}>
+                            <Text style={styles.name} numberOfLines={1}>
+                              {firstName(tutor.name)}
+                            </Text>
+                            <Text style={styles.ratingInline}>
+                              ★{' '}
+                              {(tutor.rating || 0) > 0
+                                ? tutor.rating.toFixed(1)
+                                : '—'}
+                            </Text>
+                            <Pressable
+                              style={styles.favoriteButton}
+                              onPress={() => onToggleFavorite(tutor)}
+                              disabled={isToggling(tutor.id)}
+                              accessibilityLabel={
+                                isFavorite(tutor.id)
+                                  ? 'Retirer des favoris'
+                                  : 'Ajouter aux favoris'
+                              }
+                              hitSlop={8}
+                            >
+                              {isToggling(tutor.id) ? (
+                                <ActivityIndicator
+                                  size="small"
+                                  color={colors.danger}
+                                />
+                              ) : (
+                                <Ionicons
+                                  name={
+                                    isFavorite(tutor.id)
+                                      ? 'heart'
+                                      : 'heart-outline'
+                                  }
+                                  size={22}
+                                  color={
+                                    isFavorite(tutor.id)
+                                      ? colors.danger
+                                      : colors.mintDeep
+                                  }
+                                />
+                              )}
+                            </Pressable>
+                          </View>
+                          {tutor.studyYear ? (
+                            <Text style={styles.studyYear}>{tutor.studyYear}</Text>
+                          ) : null}
+                          {tutor.city ? (
+                            <Text style={styles.locationLine} numberOfLines={2}>
+                              {tutor.city}
+                              {tutor.postalCode ? ` (${tutor.postalCode})` : ''}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+
+                      {(tutor.teachingFormats?.length ?? 0) > 0 ? (
+                        <View style={[styles.specialtyWrap, styles.detailBlock]}>
+                          {tutor.teachingFormats.map((format) => (
+                            <View
+                              key={`${tutor.id}-detail-fmt-${format}`}
+                              style={styles.formatChip}
+                            >
+                              <Text style={styles.formatChipLabel}>{format}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+
+                      <View style={[styles.specialtyWrap, styles.detailBlock]}>
+                        {(tutor.specialties?.length
+                          ? tutor.specialties
+                          : [tutor.subject]
+                        )
+                          .filter(Boolean)
+                          .map((skill) => (
+                            <View
+                              key={`${tutor.id}-detail-${skill}`}
+                              style={styles.specialtyChip}
+                            >
+                              <Text style={styles.specialtyChipLabel}>{skill}</Text>
+                            </View>
+                          ))}
+                      </View>
+
+                      <View style={styles.priceBadge}>
+                        <Text style={styles.priceBadgeText}>
+                          Prix : {formatRate(tutor.hourlyRate)} €/h
+                        </Text>
+                      </View>
+
+                      <Text style={styles.lessonsLine}>
+                        <Text style={styles.lessonsCount}>
+                          {getLessonsGiven(tutor)}
+                        </Text>
+                        {' cours donnés avec succès'}
+                      </Text>
+
+                      <View style={styles.divider} />
+
+                      {tutor.bio ? (
+                        <Text style={styles.bio}>{tutor.bio}</Text>
+                      ) : (
+                        <Text style={styles.bioMuted}>Pas encore de bio.</Text>
+                      )}
+                    </View>
+                  </ScrollView>
+                ) : null}
+              </SafeAreaView>
+              <View style={styles.detailFooter}>
                 <Pressable
-                  style={styles.modalPrimary}
-                  onPress={() => setAboutOpen(false)}
+                  style={[
+                    styles.detailMessageButton,
+                    sendingRequest && styles.disabled,
+                  ]}
+                  onPress={openMessageModal}
+                  disabled={!tutor || sendingRequest}
+                  accessibilityLabel="Envoyer un message"
                 >
-                  <Text style={styles.modalPrimaryLabel}>Fermer</Text>
+                  {sendingRequest ? (
+                    <ActivityIndicator color={colors.white} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="chatbubble-ellipses"
+                        size={18}
+                        color={colors.white}
+                      />
+                      <Text style={styles.messageButtonLabel}>
+                        Envoyer un message
+                      </Text>
+                    </>
+                  )}
                 </Pressable>
               </View>
             </View>
+            </SafeAreaProvider>
           </Modal>
 
           <Modal
@@ -588,7 +746,7 @@ export default function SwipeScreen() {
             </View>
           ) : null}
 
-          <View style={styles.cardStage}>
+          <View style={styles.cardStage} onLayout={onStageLayout}>
             {loading ? (
               <View style={[styles.card, styles.stateCard]}>
                 <ActivityIndicator size="large" color={colors.mintDeep} />
@@ -634,177 +792,194 @@ export default function SwipeScreen() {
                 </Pressable>
               </View>
             ) : (
-              <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.avatar}>
-                    {tutor.avatarUrl ? (
-                      <Image
-                        source={{ uri: tutor.avatarUrl }}
-                        style={styles.avatarImage}
-                      />
-                    ) : (
-                      <Text style={styles.avatarText}>
-                        {getInitials(tutor.name)}
-                      </Text>
-                    )}
-                  </View>
+              <ScrollView
+                ref={pagerRef}
+                horizontal
+                pagingEnabled
+                directionalLockEnabled
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                decelerationRate="fast"
+                style={styles.pager}
+                snapToInterval={pageWidth || undefined}
+                snapToAlignment="start"
+                disableIntervalMomentum
+                onMomentumScrollEnd={onTutorPageSettled}
+              >
+                {tutors.map((item, position) => {
+                  const itemFavorite = isFavorite(item.id);
+                  const itemLessons = getLessonsGiven(item);
+                  return (
+                    <View
+                      key={item.id}
+                      style={[styles.page, { width: pageWidth }]}
+                    >
+                      <View style={styles.card}>
+                        <View style={styles.cardHeader}>
+                          <View style={styles.avatar}>
+                            {item.avatarUrl ? (
+                              <Image
+                                source={{ uri: item.avatarUrl }}
+                                style={styles.avatarImage}
+                              />
+                            ) : (
+                              <Text style={styles.avatarText}>
+                                {getInitials(item.name)}
+                              </Text>
+                            )}
+                          </View>
 
-                  <View style={styles.headerMain}>
-                    <View style={styles.nameRatingRow}>
-                      <Text style={styles.name} numberOfLines={1}>
-                        {displayFirstName}
-                      </Text>
-                      <Text style={styles.ratingInline}>
-                        ★{' '}
-                        {(tutor.rating || 0) > 0
-                          ? tutor.rating.toFixed(1)
-                          : '—'}
-                      </Text>
-                      <Pressable
-                        style={styles.favoriteButton}
-                        onPress={onToggleFavorite}
-                        disabled={isToggling(tutor.id)}
-                        accessibilityLabel={
-                          tutorIsFavorite
-                            ? 'Retirer des favoris'
-                            : 'Ajouter aux favoris'
-                        }
-                        hitSlop={8}
-                      >
-                        {isToggling(tutor.id) ? (
-                          <ActivityIndicator
-                            size="small"
-                            color={colors.danger}
-                          />
-                        ) : (
-                          <Ionicons
-                            name={tutorIsFavorite ? 'heart' : 'heart-outline'}
-                            size={22}
-                            color={
-                              tutorIsFavorite ? colors.danger : colors.mintDeep
-                            }
-                          />
-                        )}
-                      </Pressable>
-                    </View>
-                    {tutor.studyYear ? (
-                      <Text style={styles.studyYear}>{tutor.studyYear}</Text>
-                    ) : null}
-                    {tutor.city ? (
-                      <Text style={styles.locationLine} numberOfLines={1}>
-                        <Ionicons
-                          name="location-outline"
-                          size={13}
-                          color={colors.muted}
-                        />{' '}
-                        {tutor.city}
-                        {tutor.postalCode ? ` (${tutor.postalCode})` : ''}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-
-                <ScrollView
-                  style={styles.cardBody}
-                  contentContainerStyle={styles.cardBodyContent}
-                  showsVerticalScrollIndicator={false}
-                  nestedScrollEnabled
-                >
-                  {(tutor.teachingFormats?.length ?? 0) > 0 ? (
-                    <View style={styles.specialtyWrap}>
-                      {tutor.teachingFormats.map((format) => (
-                        <View
-                          key={`${tutor.id}-fmt-${format}`}
-                          style={styles.formatChip}
-                        >
-                          <Text style={styles.formatChipLabel}>{format}</Text>
+                          <View style={styles.headerMain}>
+                            <View style={styles.nameRatingRow}>
+                              <Text style={styles.name} numberOfLines={1}>
+                                {firstName(item.name)}
+                              </Text>
+                              <Text style={styles.ratingInline}>
+                                ★{' '}
+                                {(item.rating || 0) > 0
+                                  ? item.rating.toFixed(1)
+                                  : '—'}
+                              </Text>
+                              <Pressable
+                                style={styles.favoriteButton}
+                                onPress={() => onToggleFavorite(item)}
+                                disabled={isToggling(item.id)}
+                                accessibilityLabel={
+                                  itemFavorite
+                                    ? 'Retirer des favoris'
+                                    : 'Ajouter aux favoris'
+                                }
+                                hitSlop={8}
+                              >
+                                {isToggling(item.id) ? (
+                                  <ActivityIndicator
+                                    size="small"
+                                    color={colors.danger}
+                                  />
+                                ) : (
+                                  <Ionicons
+                                    name={
+                                      itemFavorite ? 'heart' : 'heart-outline'
+                                    }
+                                    size={22}
+                                    color={
+                                      itemFavorite
+                                        ? colors.danger
+                                        : colors.mintDeep
+                                    }
+                                  />
+                                )}
+                              </Pressable>
+                            </View>
+                            {item.studyYear ? (
+                              <Text style={styles.studyYear}>
+                                {item.studyYear}
+                              </Text>
+                            ) : null}
+                            {item.city ? (
+                              <Text
+                                style={styles.locationLine}
+                                numberOfLines={1}
+                              >
+                                <Ionicons
+                                  name="location-outline"
+                                  size={13}
+                                  color={colors.muted}
+                                />{' '}
+                                {item.city}
+                                {item.postalCode
+                                  ? ` (${item.postalCode})`
+                                  : ''}
+                              </Text>
+                            ) : null}
+                          </View>
                         </View>
-                      ))}
-                    </View>
-                  ) : null}
 
-                  <View style={styles.specialtyWrap}>
-                    {(tutor.specialties?.length
-                      ? tutor.specialties
-                      : [tutor.subject]
-                    )
-                      .filter(Boolean)
-                      .map((skill) => (
-                        <View
-                          key={`${tutor.id}-${skill}`}
-                          style={styles.specialtyChip}
+                        <ScrollView
+                          style={styles.cardBody}
+                          contentContainerStyle={styles.cardBodyContent}
+                          showsVerticalScrollIndicator={false}
+                          nestedScrollEnabled
+                          directionalLockEnabled
                         >
-                          <Text style={styles.specialtyChipLabel}>{skill}</Text>
-                        </View>
-                      ))}
-                  </View>
+                          <View style={styles.priceBadge}>
+                            <Text style={styles.priceBadgeText}>
+                              Prix : {formatRate(item.hourlyRate)} €/h
+                            </Text>
+                          </View>
 
-                  <View style={styles.priceBadge}>
-                    <Text style={styles.priceBadgeText}>
-                      Prix : {formatRate(tutor.hourlyRate)} €/h
-                    </Text>
-                  </View>
+                          <Text style={styles.lessonsLine}>
+                            <Text style={styles.lessonsCount}>
+                              {itemLessons}
+                            </Text>
+                            {' cours donnés avec succès'}
+                          </Text>
 
-                  <Text style={styles.lessonsLine}>
-                    <Text style={styles.lessonsCount}>{lessonsGiven}</Text>
-                    {' cours donnés avec succès'}
-                  </Text>
+                          <View style={styles.divider} />
 
-                  <View style={styles.divider} />
+                          {item.bio ? (
+                            <Text style={styles.bio}>{item.bio}</Text>
+                          ) : (
+                            <Text style={styles.bioMuted}>
+                              Pas encore de bio.
+                            </Text>
+                          )}
 
-                  {tutor.bio ? (
-                    <Text style={styles.bio}>{tutor.bio}</Text>
-                  ) : (
-                    <Text style={styles.bioMuted}>Pas encore de bio.</Text>
-                  )}
-
-                  <Text style={styles.counter}>
-                    {index + 1} / {tutors.length}
-                  </Text>
-                </ScrollView>
-              </View>
+                        </ScrollView>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
             )}
           </View>
+
+          {!loading && !error && tutors.length > 0 ? (
+            <View style={styles.pagerIndicator}>
+              {tutors.length > 12 ? (
+                <View style={styles.pagerTrack}>
+                  <View
+                    style={[
+                      styles.pagerThumb,
+                      {
+                        width: `${100 / tutors.length}%`,
+                        left: `${(index / tutors.length) * 100}%`,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : (
+                <View style={styles.dotRow}>
+                  {tutors.map((item, position) => (
+                    <View
+                      key={item.id}
+                      style={[
+                        styles.dot,
+                        position === index && styles.dotActive,
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+              <Text style={styles.pagerCount}>
+                {Math.min(index + 1, tutors.length)} / {tutors.length}
+              </Text>
+            </View>
+          ) : null}
 
           {actionError ? (
             <Text style={styles.actionError}>{actionError}</Text>
           ) : null}
 
           {!loading && !error && !isDone ? (
-            <View style={styles.actions}>
-              <Pressable
-                style={styles.passButton}
-                onPress={() => goNext('pass')}
-                disabled={sendingRequest}
-                accessibilityLabel="Passer"
-              >
-                <Ionicons name="close" size={28} color="#8A9590" />
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.messageButton,
-                  sendingRequest && styles.disabled,
-                ]}
-                onPress={openMessageModal}
-                disabled={sendingRequest}
-                accessibilityLabel="Envoyer un message"
-              >
-                {sendingRequest ? (
-                  <ActivityIndicator color={colors.white} />
-                ) : (
-                  <>
-                    <Ionicons
-                      name="chatbubble-ellipses"
-                      size={18}
-                      color={colors.white}
-                    />
-                    <Text style={styles.messageButtonLabel}>
-                      Envoyer un message
-                    </Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
+            <Pressable
+              style={styles.detailsButton}
+              onPress={openDetails}
+              accessibilityLabel="Voir plus de détails"
+            >
+              <Text style={styles.detailsButtonLabel}>Voir plus de détails</Text>
+            </Pressable>
           ) : null}
         </View>
       </SafeAreaView>
@@ -874,7 +1049,7 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '800',
     letterSpacing: 0.3,
-    color: colors.ink,
+    color: colors.white,
   },
   topBarSide: {
     flex: 1,
@@ -895,10 +1070,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.65)',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.38)',
   },
   headerIconButtonActive: {
-    backgroundColor: colors.mintDeep,
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    borderColor: 'rgba(255,255,255,0.7)',
   },
   filtersBlock: {
     width: '100%',
@@ -916,20 +1094,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.4,
-    color: colors.mintDeep,
+    color: colors.white,
     textTransform: 'uppercase',
   },
   clearFiltersLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.mintDeep,
+    color: colors.white,
   },
   filterSectionLabel: {
     marginTop: 8,
     marginBottom: 6,
     fontSize: 12,
     fontWeight: '600',
-    color: colors.muted,
+    color: 'rgba(255,255,255,0.82)',
   },
   filterRow: {
     flexDirection: 'row',
@@ -994,17 +1172,21 @@ const styles = StyleSheet.create({
   cardStage: {
     flex: 1,
     minHeight: 0,
-    // Reserve space so avatar / soft overlap never cover the top bar
-    paddingTop: 44,
+    paddingTop: 12,
+  },
+  pager: {
+    flex: 1,
+  },
+  page: {
+    height: '100%',
   },
   card: {
     flex: 1,
     minHeight: 0,
     backgroundColor: colors.card,
     borderRadius: radii.card,
-    // Mild overlap of the mint band only — stage padding absorbs this
-    marginTop: -28,
-    paddingTop: 14,
+    marginTop: 0,
+    paddingTop: 16,
     paddingHorizontal: 16,
     paddingBottom: 16,
     ...shadows.card,
@@ -1018,7 +1200,7 @@ const styles = StyleSheet.create({
     width: 92,
     height: 92,
     borderRadius: 18,
-    marginTop: -8,
+    marginTop: 0,
     backgroundColor: colors.mintSoft,
     borderWidth: 3,
     borderColor: colors.white,
@@ -1129,12 +1311,50 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     color: colors.mutedSoft,
   },
-  counter: {
-    marginTop: 'auto',
-    paddingTop: 16,
+  pagerIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 10,
+    minHeight: 18,
+  },
+  dotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    flexShrink: 1,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: colors.mintSoft,
+  },
+  dotActive: {
+    width: 18,
+    backgroundColor: colors.mintDeep,
+  },
+  pagerTrack: {
+    flex: 1,
+    maxWidth: 180,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: colors.mintSoft,
+    overflow: 'hidden',
+  },
+  pagerThumb: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    borderRadius: 999,
+    backgroundColor: colors.mintDeep,
+  },
+  pagerCount: {
     fontSize: 12,
-    color: colors.mutedSoft,
-    textAlign: 'right',
+    fontWeight: '700',
+    color: colors.mintDeep,
   },
   stateCard: {
     alignItems: 'center',
@@ -1182,15 +1402,77 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 14,
   },
-  passButton: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
+  detailsButton: {
+    marginTop: 14,
+    height: 54,
+    borderRadius: radii.button,
     backgroundColor: colors.white,
     borderWidth: 1.5,
-    borderColor: '#D0D5D2',
+    borderColor: colors.mintDeep,
     alignItems: 'center',
     justifyContent: 'center',
+    ...shadows.soft,
+  },
+  detailsButtonLabel: {
+    color: colors.mintDeep,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  detailProvider: {
+    flex: 1,
+  },
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 8,
+    zIndex: 2,
+  },
+  detailTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  detailHeaderSpacer: {
+    width: 40,
+  },
+  detailScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  detailContent: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 110,
+  },
+  detailCard: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+  },
+  detailBlock: {
+    marginTop: 16,
+  },
+  detailFooter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
+    backgroundColor: colors.page,
+  },
+  detailMessageButton: {
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: colors.mintDeep,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     ...shadows.soft,
   },
   messageButton: {

@@ -18,7 +18,6 @@ import SignUpScreen from './screens/SignUpScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import TutorHomeScreen from './screens/TutorHomeScreen';
 import TutorProfileEditScreen from './screens/TutorProfileEditScreen';
-import { withTabSwipe } from './lib/withTabSwipe';
 import {
   clerkPublishableKey,
   isClerkConfigured,
@@ -30,14 +29,6 @@ import { setupPushNotificationsForUser } from './services/notifications';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
-
-const ParentDiscover = withTabSwipe(SwipeScreen);
-const ParentFavorites = withTabSwipe(FavoritesScreen);
-const ParentMessages = withTabSwipe(MessagesScreen);
-const ParentWallet = withTabSwipe(WalletScreen);
-const TutorHome = withTabSwipe(TutorHomeScreen);
-const TutorMessages = withTabSwipe(MessagesScreen);
-const TutorWallet = withTabSwipe(WalletScreen);
 
 const tabScreenOptions = ({ route }) => ({
   headerShown: false,
@@ -69,22 +60,22 @@ function ParentMainTabs() {
     <Tab.Navigator initialRouteName="Matchs" screenOptions={tabScreenOptions}>
       <Tab.Screen
         name="Matchs"
-        component={ParentDiscover}
+        component={SwipeScreen}
         options={{ title: 'Découvrir' }}
       />
       <Tab.Screen
         name="Favorites"
-        component={ParentFavorites}
+        component={FavoritesScreen}
         options={{ title: 'Favoris' }}
       />
       <Tab.Screen
         name="Messages"
-        component={ParentMessages}
+        component={MessagesScreen}
         options={{ title: 'Messages' }}
       />
       <Tab.Screen
         name="Wallet"
-        component={ParentWallet}
+        component={WalletScreen}
         options={{ title: 'Portefeuille' }}
       />
     </Tab.Navigator>
@@ -99,17 +90,17 @@ function TutorMainTabs() {
     >
       <Tab.Screen
         name="TutorHome"
-        component={TutorHome}
+        component={TutorHomeScreen}
         options={{ title: 'Accueil' }}
       />
       <Tab.Screen
         name="Messages"
-        component={TutorMessages}
+        component={MessagesScreen}
         options={{ title: 'Demandes' }}
       />
       <Tab.Screen
         name="Wallet"
-        component={TutorWallet}
+        component={WalletScreen}
         options={{ title: 'Portefeuille' }}
       />
     </Tab.Navigator>

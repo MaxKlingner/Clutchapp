@@ -2,7 +2,7 @@
  * Charte visuelle Clutch — identité cartes flottantes / menthe pastel.
  */
 export const colors = {
-  mint: '#A8E6CF',
+  mint: '#124F32',
   mintSoft: '#D8F5E9',
   mintDeep: '#1B5E3B',
   page: '#F8F9FA',

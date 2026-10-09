@@ -102,7 +102,7 @@ export default function FavoritesScreen() {
             accessibilityLabel="Réglages"
             hitSlop={8}
           >
-            <Ionicons name="settings-outline" size={22} color={colors.mintDeep} />
+            <Ionicons name="settings-outline" size={22} color={colors.white} />
           </Pressable>
         </View>
 
@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: colors.mintDeep,
+    color: colors.white,
   },
   headerIconButton: {
     width: 40,
@@ -264,8 +264,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.white,
-    ...shadows.soft,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.38)',
   },
   list: {
     paddingHorizontal: 16,
