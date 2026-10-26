@@ -85,7 +85,7 @@ set
   longitude = coalesce(longitude, 4.6115),
   teaching_formats = case
     when teaching_formats is null or cardinality(teaching_formats) = 0
-      then array['Présentiel', 'En ligne']::text[]
+      then array['Chez le professeur', 'En ligne']::text[]
     else teaching_formats
   end
 where role = 'tutor';

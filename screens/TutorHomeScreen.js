@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,12 +12,10 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, radii, shadows } from '../constants/theme';
+import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { fetchTutorDashboard } from '../lib/supabase';
-
-const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
 
 const TIERS = [
   { id: 'bronze', label: 'Tuteur Bronze', minCourses: 0 },

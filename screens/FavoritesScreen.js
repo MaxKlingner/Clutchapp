@@ -14,7 +14,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, radii, shadows } from '../constants/theme';
+import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
 import { fetchFavoriteTutors, removeFavoriteTutor } from '../lib/supabase';
 
 function getInitials(name) {
@@ -92,7 +92,7 @@ export default function FavoritesScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.mintBand} />
+      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
           <Text style={styles.title}>Mes favoris</Text>
@@ -239,19 +239,19 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 140,
     backgroundColor: colors.mint,
   },
   safe: {
     flex: 1,
   },
   header: {
+    minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
+    paddingTop: 4,
+    paddingBottom: 18,
   },
   title: {
     fontSize: 28,

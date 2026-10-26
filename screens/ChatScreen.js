@@ -19,7 +19,7 @@ import { useAuth } from '@clerk/clerk-expo';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { MATCH_STATUS } from '../lib/tutorConstants';
-import { colors, radii, shadows } from '../constants/theme';
+import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
 import {
   acceptMatchRequest,
   declineMatchRequest,
@@ -470,6 +470,14 @@ export default function ChatScreen({
           Tarif : {formatMoney(item.hourlyRate)} €/h
         </Text>
 
+        {pending ? (
+          <Text style={styles.paymentNotice}>
+            Le paiement via Clutch accroît nettement la visibilité du professeur
+            et assure la continuité de la plateforme. Il n’est cependant pas
+            obligatoire.
+          </Text>
+        ) : null}
+
         {!isTutor && pending ? (
           <Pressable
             style={[styles.payButton, busy && styles.sendDisabled]}
@@ -552,7 +560,7 @@ export default function ChatScreen({
 
   return (
     <View style={styles.root}>
-      <View style={styles.mintBand} />
+      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
       <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
         style={styles.flex}
@@ -702,6 +710,11 @@ export default function ChatScreen({
             <Text style={styles.modalTitle}>Demander le paiement</Text>
             <Text style={styles.modalHint}>
               Tarif : {formatMoney(hourlyRate)} €/h
+            </Text>
+            <Text style={styles.modalNotice}>
+              Le paiement via Clutch accroît nettement la visibilité du professeur
+              et assure la continuité de la plateforme. Il n’est cependant pas
+              obligatoire.
             </Text>
 
             <Text style={styles.modalLabel}>Nombre d’heures</Text>
@@ -856,7 +869,6 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 120,
     backgroundColor: colors.mint,
   },
   safe: {
@@ -1011,17 +1023,15 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     maxWidth: '92%',
-    borderWidth: 2,
+    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderColor: colors.border,
   },
   paymentCardMine: {
     alignSelf: 'flex-end',
-    backgroundColor: colors.mintSoft,
-    borderColor: colors.mintDeep,
   },
   paymentCardTheirs: {
     alignSelf: 'flex-start',
-    backgroundColor: colors.badgeMint,
-    borderColor: colors.mintDeep,
   },
   paymentCardMuted: {
     opacity: 0.85,
@@ -1042,6 +1052,12 @@ const styles = StyleSheet.create({
   paymentMeta: {
     marginTop: 4,
     fontSize: 13,
+    color: colors.muted,
+  },
+  paymentNotice: {
+    marginTop: 10,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.muted,
   },
   paymentWaiting: {
@@ -1166,8 +1182,14 @@ const styles = StyleSheet.create({
   },
   modalHint: {
     marginTop: 6,
-    marginBottom: 14,
+    marginBottom: 10,
     fontSize: 14,
+    color: colors.muted,
+  },
+  modalNotice: {
+    marginBottom: 14,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.muted,
   },
   modalLabel: {

@@ -1,6 +1,9 @@
 /**
  * Charte visuelle Clutch — identité cartes flottantes / menthe pastel.
  */
+import { Dimensions } from 'react-native';
+
+export const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
 export const colors = {
   mint: '#124F32',
   mintSoft: '#D8F5E9',

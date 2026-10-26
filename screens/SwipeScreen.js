@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,19 +18,94 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, radii, shadows } from '../constants/theme';
+import TutorFilterFields from '../components/TutorFilterFields';
+import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
 import {
   fetchMatches,
   fetchTutorProfiles,
+  fetchTutorReviews,
   startTutorConversation,
 } from '../lib/supabase';
-import { MATCH_STATUS, SWIPE_FILTERS, TEACHING_FORMATS } from '../lib/tutorConstants';
-import { DISTANCE_OPTIONS, tutorMatchesLocation } from '../lib/geo';
+import {
+  MATCH_STATUS,
+  FORMAT_AT_STUDENT,
+  FORMAT_AT_TUTOR,
+  FORMAT_ONLINE,
+  TEACHING_FORMATS,
+  tutorCanTravel,
+} from '../lib/tutorConstants';
 import { useFavoriteTutors } from '../hooks/useFavoriteTutors';
+import { useParentSearch } from '../lib/ParentSearchContext';
+
+const SLIDER_THUMB = 26;
+
+const FORMAT_DETAILS = {
+  [FORMAT_AT_STUDENT]:
+    'Je me déplace chez l’élève. On s’installe au calme, avec les cours et les exercices, et j’adapte la séance à ce qui bloque.',
+  [FORMAT_AT_TUTOR]:
+    'Je reçois chez moi, dans un endroit tranquille. On a de quoi écrire, et je reprends les points un par un.',
+  [FORMAT_ONLINE]:
+    'Je donne aussi le cours en ligne, en visioconférence. On partage les exercices à l’écran et on avance ensemble.',
+};
+
+function firstPersonLevel(studyYear) {
+  if (!studyYear) return 'Je n’ai pas encore précisé mon niveau d’études.';
+  if (studyYear === 'Diplômé') return 'Je suis diplômé.';
+  if (studyYear === 'Secondaire') return 'Je suis encore en secondaire.';
+  if (studyYear === 'Doctorat') return 'Je suis en doctorat.';
+  if (studyYear === 'Bachelier') return 'Je suis en bachelier.';
+  if (studyYear === 'Master') return 'Je suis en master.';
+  return `Je suis en ${studyYear}.`;
+}
+
+function joinSubjects(subjects) {
+  if (subjects.length <= 1) return subjects[0] || '';
+  return `${subjects.slice(0, -1).join(', ')} et ${subjects[subjects.length - 1]}`;
+}
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
-const MINT_BAND_H = Math.round(SCREEN_H * 0.22);
+const FILTER_SHEET_TOP = (initialWindowMetrics?.insets?.top ?? 47) + 12;
+const FILTER_SHEET_TRAVEL = SCREEN_H - FILTER_SHEET_TOP;
+
+const SAMPLE_REVIEWS = [
+  {
+    id: 'sample-1',
+    author: 'Claire',
+    rating: 5,
+    comment:
+      'Très clair et patient. Ma fille a repris confiance en maths en quelques séances.',
+    createdAt: '2026-09-12',
+  },
+  {
+    id: 'sample-2',
+    author: 'Marc',
+    rating: 4,
+    comment:
+      'Bon suivi avant les examens. Les explications sont simples et le cours est bien préparé.',
+    createdAt: '2026-08-03',
+  },
+  {
+    id: 'sample-3',
+    author: 'Inès',
+    rating: 5,
+    comment: 'Ponctuel et à l’écoute. On a vu la différence sur le bulletin.',
+    createdAt: '2026-06-21',
+  },
+];
+
+function formatReviewDate(value) {
+  if (!value) return '';
+  try {
+    return new Date(value).toLocaleDateString('fr-FR', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
 
 function formatRate(rate) {
   const value = Number(rate);
@@ -71,6 +148,7 @@ export default function SwipeScreen() {
     reload: reloadFavorites,
     error: favoriteError,
   } = useFavoriteTutors();
+  const { filters } = useParentSearch();
   const [allTutors, setAllTutors] = useState([]);
   const [index, setIndex] = useState(0);
   const [liked, setLiked] = useState([]);
@@ -78,12 +156,40 @@ export default function SwipeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
-  const [activeFilter, setActiveFilter] = useState(null);
-  const [cityQuery, setCityQuery] = useState('');
-  const [radiusKm, setRadiusKm] = useState(null);
-  const [formatFilters, setFormatFilters] = useState([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterSlide = useRef(new Animated.Value(FILTER_SHEET_TRAVEL)).current;
+  const closeFiltersRef = useRef(() => {});
+  const filterHandlePan = useRef(null);
+  if (!filterHandlePan.current) {
+    const springOpen = () => {
+      Animated.spring(filterSlide, {
+        toValue: 0,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 0,
+      }).start();
+    };
+    filterHandlePan.current = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        gesture.dy > 4 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+      onPanResponderGrant: () => {
+        filterSlide.stopAnimation();
+      },
+      onPanResponderMove: (_, gesture) => {
+        filterSlide.setValue(Math.max(0, gesture.dy));
+      },
+      onPanResponderRelease: (_, gesture) => {
+        const dy = Math.max(0, gesture.dy);
+        if (dy > 80 || gesture.vy > 0.8) closeFiltersRef.current();
+        else springOpen();
+      },
+      onPanResponderTerminate: springOpen,
+    });
+  }
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailReviews, setDetailReviews] = useState([]);
+  const [detailReviewsLoading, setDetailReviewsLoading] = useState(false);
   const [messageModalOpen, setMessageModalOpen] = useState(false);
   const [messageDraft, setMessageDraft] = useState('');
   const [sendingRequest, setSendingRequest] = useState(false);
@@ -92,6 +198,7 @@ export default function SwipeScreen() {
   const toastTimerRef = useRef(null);
   const pagerRef = useRef(null);
   const pageWidthRef = useRef(SCREEN_W - 40);
+  const indexRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -115,7 +222,7 @@ export default function SwipeScreen() {
 
     try {
       const profiles = await fetchTutorProfiles({
-        excludeClerkId: null,
+        excludeClerkId: userId,
       });
       let available = profiles;
 
@@ -132,6 +239,7 @@ export default function SwipeScreen() {
       }
 
       setAllTutors(available);
+      indexRef.current = 0;
       setIndex(0);
       setLiked([]);
       setPassed([]);
@@ -150,39 +258,17 @@ export default function SwipeScreen() {
     }, [userId])
   );
 
-  const hasActiveFilters =
-    Boolean(activeFilter) ||
-    Boolean(cityQuery.trim()) ||
-    radiusKm != null ||
-    formatFilters.length > 0;
+  const hasActiveFilters = filters.hasActiveFilters;
 
-  const tutors = useMemo(() => {
-    return allTutors.filter((tutor) => {
-      if (activeFilter) {
-        const needle = activeFilter.toLowerCase();
-        const specialtyOk = (tutor.specialties ?? []).some(
-          (skill) => String(skill).toLowerCase() === needle
-        );
-        if (!specialtyOk) return false;
-      }
-
-      if (!tutorMatchesLocation(tutor, cityQuery, radiusKm)) {
-        return false;
-      }
-
-      if (formatFilters.length > 0) {
-        const formats = tutor.teachingFormats ?? [];
-        const formatOk = formatFilters.every((fmt) => formats.includes(fmt));
-        if (!formatOk) return false;
-      }
-
-      return true;
-    });
-  }, [allTutors, activeFilter, cityQuery, radiusKm, formatFilters]);
+  const tutors = useMemo(
+    () => allTutors.filter(filters.matchesTutor),
+    [allTutors, filters.matchesTutor]
+  );
 
   function scrollToTutor(next, animated = true) {
     const max = Math.max(tutors.length - 1, 0);
     const clamped = Math.max(0, Math.min(next, max));
+    indexRef.current = clamped;
     setIndex(clamped);
     const width = pageWidthRef.current;
     if (width > 0) {
@@ -191,12 +277,15 @@ export default function SwipeScreen() {
   }
 
   function resetDeck() {
+    indexRef.current = 0;
     setIndex(0);
     setLiked([]);
     setPassed([]);
     setActionError(null);
     pagerRef.current?.scrollTo({ x: 0, animated: false });
   }
+
+  filters.onDeckReset.current = resetDeck;
 
   function onStageLayout(event) {
     const width = Math.round(event.nativeEvent.layout.width);
@@ -206,41 +295,74 @@ export default function SwipeScreen() {
     pagerRef.current?.scrollTo({ x: index * width, animated: false });
   }
 
-  function onTutorPageSettled(event) {
+  function onTutorScroll(event) {
     const width = pageWidthRef.current;
     if (!width) return;
-    const next = Math.round(event.nativeEvent.contentOffset.x / width);
-    if (next !== index) setIndex(next);
-  }
-
-  function onSelectFilter(label) {
-    setActiveFilter((prev) => (prev === label ? null : label));
-    resetDeck();
-  }
-
-  function onSelectRadius(value) {
-    setRadiusKm(value);
-    resetDeck();
-  }
-
-  function onToggleFormatFilter(format) {
-    setFormatFilters((prev) =>
-      prev.includes(format)
-        ? prev.filter((item) => item !== format)
-        : [...prev, format]
+    const raw = event.nativeEvent.contentOffset.x / width;
+    const next = Math.max(
+      0,
+      Math.min(tutors.length - 1, Math.round(raw))
     );
-    resetDeck();
+    if (next === indexRef.current) return;
+    indexRef.current = next;
+    setIndex(next);
   }
 
-  function clearAllFilters() {
-    setActiveFilter(null);
-    setCityQuery('');
-    setRadiusKm(null);
-    setFormatFilters([]);
-    resetDeck();
+  function openFilters() {
+    filterSlide.setValue(FILTER_SHEET_TRAVEL);
+    setFiltersOpen(true);
   }
+
+  useEffect(() => {
+    if (!filtersOpen) return undefined;
+    const animation = Animated.timing(filterSlide, {
+      toValue: 0,
+      duration: 280,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [filtersOpen, filterSlide]);
+
+  function closeFilters() {
+    Animated.timing(filterSlide, {
+      toValue: FILTER_SHEET_TRAVEL,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setFiltersOpen(false);
+    });
+  }
+
+  closeFiltersRef.current = closeFilters;
 
   const tutor = tutors[index];
+  const detailSubjects = (
+    tutor?.specialties?.length ? tutor.specialties : [tutor?.subject]
+  ).filter(Boolean);
+  const detailLessons = tutor ? getLessonsGiven(tutor) : 0;
+  const detailFormats = TEACHING_FORMATS.filter((format) =>
+    (tutor?.teachingFormats ?? []).includes(format)
+  );
+
+  useEffect(() => {
+    if (!detailOpen || !tutor?.id) return undefined;
+    let cancelled = false;
+    setDetailReviewsLoading(true);
+    fetchTutorReviews(tutor.id)
+      .then((rows) => {
+        if (!cancelled) setDetailReviews(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDetailReviews([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailReviewsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailOpen, tutor?.id]);
   const isDone = !loading && !error && tutors.length === 0;
 
   async function onToggleFavorite(target = tutor) {
@@ -307,6 +429,7 @@ export default function SwipeScreen() {
   }
 
   const reset = () => {
+    indexRef.current = 0;
     setIndex(0);
     setLiked([]);
     setPassed([]);
@@ -337,12 +460,12 @@ export default function SwipeScreen() {
                   (filtersOpen || hasActiveFilters) &&
                     styles.headerIconButtonActive,
                 ]}
-                onPress={() => setFiltersOpen((open) => !open)}
+                onPress={openFilters}
                 accessibilityLabel="Filtres de recherche"
                 hitSlop={8}
               >
                 <Ionicons
-                  name={filtersOpen ? 'close' : 'options-outline'}
+                  name="options-outline"
                   size={22}
                   color={colors.white}
                 />
@@ -369,7 +492,12 @@ export default function SwipeScreen() {
             animationType="slide"
             statusBarTranslucent={false}
             onRequestClose={() => {
-              if (!sendingRequest) setDetailOpen(false);
+              if (sendingRequest) return;
+              if (messageModalOpen) {
+                setMessageModalOpen(false);
+                return;
+              }
+              setDetailOpen(false);
             }}
           >
             <SafeAreaProvider initialMetrics={initialWindowMetrics} style={styles.detailProvider}>
@@ -400,124 +528,189 @@ export default function SwipeScreen() {
                     contentContainerStyle={styles.detailContent}
                     showsVerticalScrollIndicator={false}
                   >
-                    <View style={[styles.card, styles.detailCard]}>
-                      <View style={styles.cardHeader}>
-                        <View style={styles.avatar}>
-                          {tutor.avatarUrl ? (
-                            <Image
-                              source={{ uri: tutor.avatarUrl }}
-                              style={styles.avatarImage}
-                            />
-                          ) : (
-                            <Text style={styles.avatarText}>
-                              {getInitials(tutor.name)}
-                            </Text>
-                          )}
-                        </View>
-                        <View style={styles.headerMain}>
-                          <View style={styles.nameRatingRow}>
-                            <Text style={styles.name} numberOfLines={1}>
-                              {firstName(tutor.name)}
-                            </Text>
-                            <Text style={styles.ratingInline}>
-                              ★{' '}
-                              {(tutor.rating || 0) > 0
-                                ? tutor.rating.toFixed(1)
-                                : '—'}
-                            </Text>
-                            <Pressable
-                              style={styles.favoriteButton}
-                              onPress={() => onToggleFavorite(tutor)}
-                              disabled={isToggling(tutor.id)}
-                              accessibilityLabel={
-                                isFavorite(tutor.id)
-                                  ? 'Retirer des favoris'
-                                  : 'Ajouter aux favoris'
-                              }
-                              hitSlop={8}
-                            >
-                              {isToggling(tutor.id) ? (
-                                <ActivityIndicator
-                                  size="small"
-                                  color={colors.danger}
-                                />
-                              ) : (
-                                <Ionicons
-                                  name={
-                                    isFavorite(tutor.id)
-                                      ? 'heart'
-                                      : 'heart-outline'
-                                  }
-                                  size={22}
-                                  color={
-                                    isFavorite(tutor.id)
-                                      ? colors.danger
-                                      : colors.mintDeep
-                                  }
-                                />
-                              )}
-                            </Pressable>
-                          </View>
-                          {tutor.studyYear ? (
-                            <Text style={styles.studyYear}>{tutor.studyYear}</Text>
-                          ) : null}
-                          {tutor.city ? (
-                            <Text style={styles.locationLine} numberOfLines={2}>
-                              {tutor.city}
-                              {tutor.postalCode ? ` (${tutor.postalCode})` : ''}
-                            </Text>
-                          ) : null}
-                        </View>
+                    <View style={styles.detailHeroCard}>
+                      <Pressable
+                        style={styles.detailHeroHeart}
+                        onPress={() => onToggleFavorite(tutor)}
+                        disabled={isToggling(tutor.id)}
+                        accessibilityLabel={
+                          isFavorite(tutor.id)
+                            ? 'Retirer des favoris'
+                            : 'Ajouter aux favoris'
+                        }
+                        hitSlop={8}
+                      >
+                        {isToggling(tutor.id) ? (
+                          <ActivityIndicator size="small" color={colors.danger} />
+                        ) : (
+                          <Ionicons
+                            name={
+                              isFavorite(tutor.id) ? 'heart' : 'heart-outline'
+                            }
+                            size={22}
+                            color={
+                              isFavorite(tutor.id) ? colors.danger : colors.muted
+                            }
+                          />
+                        )}
+                      </Pressable>
+                      <View style={styles.detailHeroAvatar}>
+                        {tutor.avatarUrl ? (
+                          <Image
+                            source={{ uri: tutor.avatarUrl }}
+                            style={styles.detailHeroImage}
+                          />
+                        ) : (
+                          <Text style={styles.detailHeroInitials}>
+                            {getInitials(tutor.name)}
+                          </Text>
+                        )}
                       </View>
-
-                      {(tutor.teachingFormats?.length ?? 0) > 0 ? (
-                        <View style={[styles.specialtyWrap, styles.detailBlock]}>
-                          {tutor.teachingFormats.map((format) => (
-                            <View
-                              key={`${tutor.id}-detail-fmt-${format}`}
-                              style={styles.formatChip}
-                            >
-                              <Text style={styles.formatChipLabel}>{format}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      ) : null}
-
-                      <View style={[styles.specialtyWrap, styles.detailBlock]}>
-                        {(tutor.specialties?.length
-                          ? tutor.specialties
-                          : [tutor.subject]
-                        )
-                          .filter(Boolean)
-                          .map((skill) => (
-                            <View
-                              key={`${tutor.id}-detail-${skill}`}
-                              style={styles.specialtyChip}
-                            >
-                              <Text style={styles.specialtyChipLabel}>{skill}</Text>
-                            </View>
-                          ))}
-                      </View>
-
-                      <View style={styles.priceBadge}>
-                        <Text style={styles.priceBadgeText}>
-                          Prix : {formatRate(tutor.hourlyRate)} €/h
-                        </Text>
-                      </View>
-
-                      <Text style={styles.lessonsLine}>
-                        <Text style={styles.lessonsCount}>
-                          {getLessonsGiven(tutor)}
-                        </Text>
-                        {' cours donnés avec succès'}
+                      <Text style={styles.detailHeroName}>
+                        {firstName(tutor.name)}
                       </Text>
+                      <Text style={styles.detailHeroHeadline}>
+                        {detailSubjects.length
+                          ? `Cours de ${detailSubjects.join(', ')}`
+                          : 'Cours à préciser'}
+                      </Text>
+                      <Text style={styles.detailHeroCity}>
+                        {tutor.city
+                          ? `${tutor.city}${
+                              tutor.postalCode ? ` · ${tutor.postalCode}` : ''
+                            }`
+                          : 'Ville à préciser'}
+                      </Text>
+                    </View>
 
-                      <View style={styles.divider} />
+                    <View style={styles.detailStats}>
+                      {[
+                        [
+                          'Note',
+                          (tutor.rating || 0) > 0
+                            ? tutor.rating.toFixed(1)
+                            : '—',
+                        ],
+                        ['Avis', String(tutor.reviewCount || detailReviews.length || 0)],
+                        ['Cours', String(detailLessons)],
+                      ].map(([label, value]) => (
+                        <View key={label} style={styles.detailStat}>
+                          <Text style={styles.detailStatValue}>{value}</Text>
+                          <Text style={styles.detailStatLabel}>{label}</Text>
+                        </View>
+                      ))}
+                    </View>
 
-                      {tutor.bio ? (
-                        <Text style={styles.bio}>{tutor.bio}</Text>
+                    <View style={styles.detailBlockCard}>
+                      <Text style={styles.detailBlockTitle}>Tarif</Text>
+                      <Text style={styles.detailPriceHero}>
+                        {formatRate(tutor.hourlyRate)} €
+                        <Text style={styles.detailPriceUnit}> / heure</Text>
+                      </Text>
+                      <Text style={styles.detailBlockText}>
+                        Le premier échange se fait par message, sans réservation
+                        immédiate.
+                      </Text>
+                    </View>
+
+                    <View style={styles.detailBlockCard}>
+                      <Text style={styles.detailBlockTitle}>À propos</Text>
+                      <Text style={tutor.bio ? styles.detailBlockText : styles.bioMuted}>
+                        {tutor.bio ||
+                          `${firstName(tutor.name)} n’a pas encore rédigé sa présentation.`}
+                      </Text>
+                    </View>
+
+                    <View style={styles.detailBlockCard}>
+                      <Text style={styles.detailBlockTitle}>Matières</Text>
+                      <View style={styles.detailChipWrap}>
+                        {(detailSubjects.length
+                          ? detailSubjects
+                          : ['À préciser']
+                        ).map((subject) => (
+                          <View key={`${tutor.id}-${subject}`} style={styles.detailChip}>
+                            <Text style={styles.detailChipLabel}>{subject}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={styles.detailBlockCard}>
+                      <Text style={styles.detailBlockTitle}>Parcours</Text>
+                      <Text style={styles.detailBlockText}>
+                        {`${firstPersonLevel(tutor.studyYear)} ${
+                          detailSubjects.length
+                            ? `J’accompagne des élèves en ${joinSubjects(detailSubjects)}.`
+                            : 'Les matières que je propose ne sont pas encore précisées.'
+                        } Je reprends le chapitre en cours, je montre comment attaquer un exercice, puis on s’entraîne jusqu’à ce que la méthode soit claire.`}
+                      </Text>
+                    </View>
+
+                    <View style={styles.detailBlockCard}>
+                      <Text style={styles.detailBlockTitle}>
+                        Où et comment se passe le cours
+                      </Text>
+                      <Text style={styles.detailBlockText}>
+                        {tutor.city
+                          ? `J’habite à ${tutor.city}.`
+                          : 'Je n’ai pas encore indiqué ma ville.'}
+                      </Text>
+                      {detailFormats.length ? (
+                        detailFormats.map((format) => (
+                          <View key={format} style={styles.detailFormatCard}>
+                            <Text style={styles.detailFormatTitle}>{format}</Text>
+                            <Text style={styles.detailBlockText}>
+                              {FORMAT_DETAILS[format]}
+                            </Text>
+                          </View>
+                        ))
                       ) : (
-                        <Text style={styles.bioMuted}>Pas encore de bio.</Text>
+                        <Text style={styles.bioMuted}>
+                          Je n’ai pas encore précisé comment se passe le cours.
+                        </Text>
+                      )}
+                    </View>
+
+                    <View style={styles.detailBlockCard}>
+                      <Text style={styles.detailBlockTitle}>Avis</Text>
+                      {detailReviewsLoading ? (
+                        <ActivityIndicator color={colors.mintDeep} />
+                      ) : (
+                        <>
+                          {detailReviews.length === 0 ? (
+                            <Text style={styles.detailReviewHint}>
+                              Exemples, pour voir le rendu.
+                            </Text>
+                          ) : null}
+                          {(detailReviews.length ? detailReviews : SAMPLE_REVIEWS).map(
+                            (review, reviewIndex, list) => (
+                              <View
+                                key={review.id}
+                                style={[
+                                  styles.detailReview,
+                                  reviewIndex === list.length - 1 &&
+                                    styles.detailReviewLast,
+                                ]}
+                              >
+                                <View style={styles.detailReviewHead}>
+                                  <Text style={styles.detailReviewAuthor}>
+                                    {review.author || 'Parent'}
+                                  </Text>
+                                  <Text style={styles.detailReviewDate}>
+                                    {formatReviewDate(review.createdAt)}
+                                  </Text>
+                                </View>
+                                <Text style={styles.detailReviewRating}>
+                                  {'★'.repeat(review.rating)}
+                                  {'☆'.repeat(Math.max(0, 5 - review.rating))}
+                                </Text>
+                                <Text style={styles.detailBlockText}>
+                                  {review.comment || 'Avis sans commentaire.'}
+                                </Text>
+                              </View>
+                            )
+                          )}
+                        </>
                       )}
                     </View>
                   </ScrollView>
@@ -549,202 +742,59 @@ export default function SwipeScreen() {
                   )}
                 </Pressable>
               </View>
+              {messageModalOpen ? (
+                <View style={styles.detailMessageOverlay}>
+                  <Pressable
+                    style={styles.modalBackdrop}
+                    onPress={() => {
+                      if (!sendingRequest) setMessageModalOpen(false);
+                    }}
+                  />
+                  <View style={styles.modalCard}>
+                    <Text style={styles.modalTitle}>Proposer un cours</Text>
+                    <Text style={styles.modalSectionLabel}>
+                      Message à {tutor?.name ?? 'ton tuteur'}
+                    </Text>
+                    <TextInput
+                      style={styles.messageInput}
+                      value={messageDraft}
+                      onChangeText={setMessageDraft}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="Écris ta demande…"
+                      placeholderTextColor={colors.mutedSoft}
+                      editable={!sendingRequest}
+                    />
+                    <Pressable
+                      style={[
+                        styles.modalPrimary,
+                        (!messageDraft.trim() || sendingRequest) &&
+                          styles.disabled,
+                      ]}
+                      onPress={onSendRequest}
+                      disabled={!messageDraft.trim() || sendingRequest}
+                    >
+                      {sendingRequest ? (
+                        <ActivityIndicator color={colors.white} />
+                      ) : (
+                        <Text style={styles.modalPrimaryLabel}>
+                          Envoyer la demande
+                        </Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      style={styles.modalCancel}
+                      onPress={() => setMessageModalOpen(false)}
+                      disabled={sendingRequest}
+                    >
+                      <Text style={styles.modalCancelLabel}>Annuler</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
             </View>
             </SafeAreaProvider>
           </Modal>
-
-          <Modal
-            visible={messageModalOpen}
-            transparent
-            animationType="fade"
-            onRequestClose={() => {
-              if (!sendingRequest) setMessageModalOpen(false);
-            }}
-          >
-            <View style={styles.modalOverlay}>
-              <Pressable
-                style={styles.modalBackdrop}
-                onPress={() => {
-                  if (!sendingRequest) setMessageModalOpen(false);
-                }}
-              />
-              <View style={styles.modalCard}>
-                <Text style={styles.modalTitle}>Proposer un cours</Text>
-                <Text style={styles.modalSectionLabel}>
-                  Message à {tutor?.name ?? 'ton tuteur'}
-                </Text>
-                <TextInput
-                  style={styles.messageInput}
-                  value={messageDraft}
-                  onChangeText={setMessageDraft}
-                  multiline
-                  textAlignVertical="top"
-                  placeholder="Écris ta demande…"
-                  placeholderTextColor={colors.mutedSoft}
-                  editable={!sendingRequest}
-                />
-                <Pressable
-                  style={[
-                    styles.modalPrimary,
-                    (!messageDraft.trim() || sendingRequest) && styles.disabled,
-                  ]}
-                  onPress={onSendRequest}
-                  disabled={!messageDraft.trim() || sendingRequest}
-                >
-                  {sendingRequest ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <Text style={styles.modalPrimaryLabel}>
-                      Envoyer la demande
-                    </Text>
-                  )}
-                </Pressable>
-                <Pressable
-                  style={styles.modalCancel}
-                  onPress={() => setMessageModalOpen(false)}
-                  disabled={sendingRequest}
-                >
-                  <Text style={styles.modalCancelLabel}>Annuler</Text>
-                </Pressable>
-              </View>
-            </View>
-          </Modal>
-
-          {filtersOpen ? (
-            <View style={styles.filtersBlock}>
-              <View style={styles.filtersHeaderRow}>
-                <Text style={styles.filtersLabel}>Filtres</Text>
-                {hasActiveFilters ? (
-                  <Pressable onPress={clearAllFilters} hitSlop={8}>
-                    <Text style={styles.clearFiltersLabel}>Tout effacer</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
-              <Text style={styles.filterSectionLabel}>Matières</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.filterRow}
-              >
-                <Pressable
-                  style={[
-                    styles.filterChip,
-                    !activeFilter && styles.filterChipActive,
-                  ]}
-                  onPress={() => onSelectFilter(null)}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipLabel,
-                      !activeFilter && styles.filterChipLabelActive,
-                    ]}
-                  >
-                    Tous
-                  </Text>
-                </Pressable>
-                {SWIPE_FILTERS.map((label) => {
-                  const active = activeFilter === label;
-                  return (
-                    <Pressable
-                      key={label}
-                      style={[
-                        styles.filterChip,
-                        active && styles.filterChipActive,
-                      ]}
-                      onPress={() => onSelectFilter(label)}
-                    >
-                      <Text
-                        style={[
-                          styles.filterChipLabel,
-                          active && styles.filterChipLabelActive,
-                        ]}
-                      >
-                        {label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-
-              <Text style={styles.filterSectionLabel}>Ville / code postal</Text>
-              <TextInput
-                style={styles.cityInput}
-                value={cityQuery}
-                onChangeText={(text) => {
-                  setCityQuery(text);
-                  resetDeck();
-                }}
-                placeholder="Ex. Ottignies-Louvain-la-Neuve ou 1348"
-                placeholderTextColor={colors.mutedSoft}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
-
-              <Text style={styles.filterSectionLabel}>Distance</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.filterRow}
-              >
-                {DISTANCE_OPTIONS.map((option) => {
-                  const active = radiusKm === option.value;
-                  return (
-                    <Pressable
-                      key={option.label}
-                      style={[
-                        styles.filterChip,
-                        active && styles.filterChipActive,
-                      ]}
-                      onPress={() => onSelectRadius(option.value)}
-                    >
-                      <Text
-                        style={[
-                          styles.filterChipLabel,
-                          active && styles.filterChipLabelActive,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-
-              <Text style={styles.filterSectionLabel}>Format de cours</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.filterRow}
-              >
-                {TEACHING_FORMATS.map((format) => {
-                  const active = formatFilters.includes(format);
-                  return (
-                    <Pressable
-                      key={format}
-                      style={[
-                        styles.filterChip,
-                        active && styles.filterChipActive,
-                      ]}
-                      onPress={() => onToggleFormatFilter(format)}
-                    >
-                      <Text
-                        style={[
-                          styles.filterChipLabel,
-                          active && styles.filterChipLabelActive,
-                        ]}
-                      >
-                        {format}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          ) : null}
 
           <View style={styles.cardStage} onLayout={onStageLayout}>
             {loading ? (
@@ -768,7 +818,7 @@ export default function SwipeScreen() {
                 <Text style={styles.emptyText}>
                   {tutors.length === 0
                     ? hasActiveFilters
-                      ? 'Aucun tuteur ne correspond à tes filtres. Élargis la ville, la distance ou le format.'
+                      ? 'Aucun tuteur ne correspond à tes filtres. Élargis la matière, l’adresse, le prix ou le niveau.'
                       : 'Tous les tuteurs sont déjà matchés, ou aucun profil n’est disponible.'
                     : `Demandes : ${liked.length || 0}\nPassés : ${passed.length || 0}\n\nRetrouve tes conversations dans Messages.`}
                 </Text>
@@ -777,7 +827,7 @@ export default function SwipeScreen() {
                   onPress={
                     tutors.length === 0
                       ? hasActiveFilters
-                        ? clearAllFilters
+                        ? filters.clearAllFilters
                         : loadTutors
                       : reset
                   }
@@ -805,128 +855,136 @@ export default function SwipeScreen() {
                 snapToInterval={pageWidth || undefined}
                 snapToAlignment="start"
                 disableIntervalMomentum
-                onMomentumScrollEnd={onTutorPageSettled}
+                scrollEventThrottle={16}
+                onScroll={onTutorScroll}
               >
-                {tutors.map((item, position) => {
+                {tutors.map((item) => {
                   const itemFavorite = isFavorite(item.id);
                   const itemLessons = getLessonsGiven(item);
+                  const subjects = (
+                    item.specialties?.length ? item.specialties : [item.subject]
+                  ).filter(Boolean);
+                  const cityLabel = item.city
+                    ? `${item.city}${item.postalCode ? ` · ${item.postalCode}` : ''}`
+                    : 'À préciser';
+                  const ratingLabel =
+                    (item.rating || 0) > 0 ? item.rating.toFixed(1) : '—';
+                  const lessonsLabel =
+                    itemLessons > 0
+                      ? `${itemLessons} cours donnés avec succès`
+                      : 'Pas encore de cours';
+                  const travels = tutorCanTravel(item.teachingFormats);
                   return (
                     <View
                       key={item.id}
                       style={[styles.page, { width: pageWidth }]}
                     >
-                      <View style={styles.card}>
-                        <View style={styles.cardHeader}>
-                          <View style={styles.avatar}>
+                      <View style={styles.recapClip}>
+                      <View style={[styles.card, styles.recapCard]}>
+                        <View style={styles.recapIdentity}>
+                          <View style={styles.recapAvatar}>
                             {item.avatarUrl ? (
                               <Image
                                 source={{ uri: item.avatarUrl }}
-                                style={styles.avatarImage}
+                                style={styles.recapAvatarImage}
                               />
                             ) : (
-                              <Text style={styles.avatarText}>
+                              <Text style={styles.recapAvatarText}>
                                 {getInitials(item.name)}
                               </Text>
                             )}
                           </View>
-
-                          <View style={styles.headerMain}>
-                            <View style={styles.nameRatingRow}>
-                              <Text style={styles.name} numberOfLines={1}>
-                                {firstName(item.name)}
-                              </Text>
-                              <Text style={styles.ratingInline}>
-                                ★{' '}
-                                {(item.rating || 0) > 0
-                                  ? item.rating.toFixed(1)
-                                  : '—'}
-                              </Text>
-                              <Pressable
-                                style={styles.favoriteButton}
-                                onPress={() => onToggleFavorite(item)}
-                                disabled={isToggling(item.id)}
-                                accessibilityLabel={
-                                  itemFavorite
-                                    ? 'Retirer des favoris'
-                                    : 'Ajouter aux favoris'
+                          <View style={styles.recapIdentityText}>
+                            <Text style={styles.recapName} numberOfLines={1}>
+                              {firstName(item.name)}
+                            </Text>
+                            <Text style={styles.recapRating} numberOfLines={1}>
+                              ★ {ratingLabel}
+                            </Text>
+                          </View>
+                          <Pressable
+                            style={styles.recapHeart}
+                            onPress={() => onToggleFavorite(item)}
+                            disabled={isToggling(item.id)}
+                            accessibilityLabel={
+                              itemFavorite
+                                ? 'Retirer des favoris'
+                                : 'Ajouter aux favoris'
+                            }
+                            hitSlop={8}
+                          >
+                            {isToggling(item.id) ? (
+                              <ActivityIndicator
+                                size="small"
+                                color={colors.danger}
+                              />
+                            ) : (
+                              <Ionicons
+                                name={itemFavorite ? 'heart' : 'heart-outline'}
+                                size={20}
+                                color={
+                                  itemFavorite ? colors.danger : colors.muted
                                 }
-                                hitSlop={8}
-                              >
-                                {isToggling(item.id) ? (
-                                  <ActivityIndicator
-                                    size="small"
-                                    color={colors.danger}
-                                  />
-                                ) : (
-                                  <Ionicons
-                                    name={
-                                      itemFavorite ? 'heart' : 'heart-outline'
-                                    }
-                                    size={22}
-                                    color={
-                                      itemFavorite
-                                        ? colors.danger
-                                        : colors.mintDeep
-                                    }
-                                  />
-                                )}
-                              </Pressable>
+                              />
+                            )}
+                          </Pressable>
+                        </View>
+
+                        <Text style={styles.recapLessons} numberOfLines={2}>
+                          {lessonsLabel}
+                        </Text>
+
+                        <View style={styles.recapSplit}>
+                          <View style={styles.recapSplitMain}>
+                            <Text style={styles.recapLabelFloat}>Matières</Text>
+                            <View style={styles.recapZoneBody}>
+                              <View style={styles.recapSubjectList}>
+                                {(subjects.length
+                                  ? subjects
+                                  : ['À préciser']
+                                ).map((subject, subjectIndex) => (
+                                  <Text
+                                    key={`${item.id}-${subject}-${subjectIndex}`}
+                                    style={styles.recapValue}
+                                    numberOfLines={1}
+                                  >
+                                    {subject}
+                                  </Text>
+                                ))}
+                              </View>
                             </View>
-                            {item.studyYear ? (
-                              <Text style={styles.studyYear}>
-                                {item.studyYear}
+                          </View>
+                          <View style={styles.recapPricePane}>
+                            <Text style={[styles.recapLabelFloat, styles.recapPriceLabel]}>
+                              Tarif
+                            </Text>
+                            <View style={styles.recapPriceBody}>
+                              <Text style={styles.recapPrice} numberOfLines={2}>
+                                {formatRate(item.hourlyRate)} €/h
                               </Text>
-                            ) : null}
-                            {item.city ? (
-                              <Text
-                                style={styles.locationLine}
-                                numberOfLines={1}
-                              >
-                                <Ionicons
-                                  name="location-outline"
-                                  size={13}
-                                  color={colors.muted}
-                                />{' '}
-                                {item.city}
-                                {item.postalCode
-                                  ? ` (${item.postalCode})`
-                                  : ''}
-                              </Text>
-                            ) : null}
+                            </View>
                           </View>
                         </View>
 
-                        <ScrollView
-                          style={styles.cardBody}
-                          contentContainerStyle={styles.cardBodyContent}
-                          showsVerticalScrollIndicator={false}
-                          nestedScrollEnabled
-                          directionalLockEnabled
-                        >
-                          <View style={styles.priceBadge}>
-                            <Text style={styles.priceBadgeText}>
-                              Prix : {formatRate(item.hourlyRate)} €/h
+                        <View style={styles.recapLevelRow}>
+                          <Text style={styles.recapLabelFloat}>Niveau</Text>
+                          <View style={styles.recapPriceBody}>
+                            <Text style={styles.recapValue} numberOfLines={1}>
+                              {item.studyYear || 'À préciser'}
                             </Text>
                           </View>
+                        </View>
 
-                          <Text style={styles.lessonsLine}>
-                            <Text style={styles.lessonsCount}>
-                              {itemLessons}
-                            </Text>
-                            {' cours donnés avec succès'}
+                        <View style={styles.recapRow}>
+                          <Text style={styles.recapLabel}>Ville</Text>
+                          <Text style={styles.recapValue} numberOfLines={2}>
+                            {cityLabel}
                           </Text>
-
-                          <View style={styles.divider} />
-
-                          {item.bio ? (
-                            <Text style={styles.bio}>{item.bio}</Text>
-                          ) : (
-                            <Text style={styles.bioMuted}>
-                              Pas encore de bio.
-                            </Text>
-                          )}
-
-                        </ScrollView>
+                          <Text style={styles.recapTravel} numberOfLines={1}>
+                            {travels ? 'Peut se déplacer' : 'Ne se déplace pas'}
+                          </Text>
+                        </View>
+                      </View>
                       </View>
                     </View>
                   );
@@ -983,6 +1041,66 @@ export default function SwipeScreen() {
           ) : null}
         </View>
       </SafeAreaView>
+
+      {filtersOpen ? (
+        <View style={styles.filterLayer}>
+          <Pressable style={styles.filterBackdrop} onPress={closeFilters} />
+          <Animated.View
+            style={[
+              styles.filterDrawer,
+              { transform: [{ translateY: filterSlide }] },
+            ]}
+          >
+            <SafeAreaView style={styles.filterDrawerSafe} edges={['bottom']}>
+              <View
+                style={styles.filterHandleWrap}
+                {...filterHandlePan.current.panHandlers}
+              >
+                <View style={styles.filterHandle} />
+              </View>
+              <View style={styles.filterDrawerHeader}>
+                <Text pointerEvents="none" style={styles.filterDrawerTitle}>
+                  Filtres
+                </Text>
+                <Pressable
+                  style={styles.filterClose}
+                  onPress={closeFilters}
+                  hitSlop={8}
+                  accessibilityLabel="Fermer les filtres"
+                >
+                  <Ionicons name="close" size={22} color={colors.ink} />
+                </Pressable>
+                <Pressable
+                  style={styles.filterClearButton}
+                  onPress={filters.clearAllFilters}
+                  hitSlop={8}
+                >
+                  <Text style={styles.filterClear}>Effacer</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView
+                style={styles.filterDrawerScroll}
+                contentContainerStyle={styles.filterDrawerContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <TutorFilterFields filters={filters} />
+              </ScrollView>
+
+              <View style={styles.filterFooter}>
+                <Pressable style={styles.filterApply} onPress={closeFilters}>
+                  <Text style={styles.filterApplyLabel}>
+                    {tutors.length === 1
+                      ? 'Voir 1 prof'
+                      : `Voir ${tutors.length} profs`}
+                  </Text>
+                </Pressable>
+              </View>
+            </SafeAreaView>
+          </Animated.View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -991,6 +1109,262 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.page,
+  },
+  filterLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+  },
+  filterBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(16, 38, 28, 0.45)',
+  },
+  filterDrawer: {
+    position: 'absolute',
+    top: FILTER_SHEET_TOP,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: 'hidden',
+    shadowColor: '#10261C',
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: -8 },
+    elevation: 16,
+  },
+  filterDrawerSafe: {
+    flex: 1,
+    backgroundColor: colors.white,
+  },
+  filterHandleWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  filterHandle: {
+    width: 40,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#D5DED9',
+  },
+  filterDrawerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  filterClose: {
+    zIndex: 2,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.page,
+  },
+  filterDrawerTitle: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 0,
+    textAlign: 'center',
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  filterClearButton: {
+    zIndex: 2,
+  },
+  filterClear: {
+    minWidth: 36,
+    textAlign: 'right',
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.mintDeep,
+  },
+  filterDrawerScroll: {
+    flex: 1,
+  },
+  filterDrawerContent: {
+    paddingBottom: 8,
+  },
+  filterSection: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  filterSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  filterSectionCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  filterSectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  filterSectionSummary: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.mutedSoft,
+  },
+  filterSectionSummaryActive: {
+    color: colors.mintDeep,
+  },
+  filterSectionBody: {
+    paddingHorizontal: 10,
+    paddingBottom: 8,
+  },
+  filterHint: {
+    marginTop: 2,
+    marginBottom: 6,
+    marginHorizontal: 8,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.muted,
+  },
+  filterSlider: {
+    marginHorizontal: 8,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  filterSliderCaption: {
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.mintDeep,
+    marginBottom: 8,
+  },
+  filterSliderHit: {
+    height: 36,
+    justifyContent: 'center',
+  },
+  filterSliderTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#E2EAE5',
+  },
+  filterSliderFill: {
+    position: 'absolute',
+    top: 15,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.mintDeep,
+  },
+  filterSliderThumb: {
+    position: 'absolute',
+    top: 5,
+    width: SLIDER_THUMB,
+    height: SLIDER_THUMB,
+    borderRadius: SLIDER_THUMB / 2,
+    backgroundColor: colors.white,
+    borderWidth: 3,
+    borderColor: colors.mintDeep,
+    ...shadows.soft,
+  },
+  filterSliderEnds: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 6,
+  },
+  filterSliderEnd: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.mutedSoft,
+  },
+  filterSliderEndRight: {
+    textAlign: 'right',
+  },
+  filterChoice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  filterChoiceLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  filterChoiceLabelActive: {
+    fontWeight: '700',
+    color: colors.mintDeep,
+  },
+  drawerInput: {
+    marginHorizontal: 8,
+    marginBottom: 8,
+    backgroundColor: colors.page,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.ink,
+  },
+  suggestList: {
+    marginHorizontal: 8,
+    marginTop: -2,
+    marginBottom: 8,
+    borderRadius: 12,
+    backgroundColor: colors.page,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  suggestLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  originHint: {
+    marginHorizontal: 8,
+    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.mintDeep,
+  },
+  filterFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  filterApply: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: colors.mintDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterApplyLabel: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '800',
   },
   mintBand: {
     position: 'absolute',
@@ -1173,12 +1547,15 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     paddingTop: 12,
+    backgroundColor: 'transparent',
   },
   pager: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   page: {
     height: '100%',
+    backgroundColor: 'transparent',
   },
   card: {
     flex: 1,
@@ -1247,10 +1624,169 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: colors.mutedSoft,
   },
-  cardBody: {
+  recapClip: {
     flex: 1,
     minHeight: 0,
-    marginTop: 14,
+    borderRadius: radii.card,
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+  },
+  recapCard: {
+    paddingTop: 0,
+    overflow: 'hidden',
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
+  },
+  recapIdentity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
+  },
+  recapAvatar: {
+    width: 112,
+    height: 112,
+    borderRadius: 24,
+    backgroundColor: colors.mintSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  recapAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  recapAvatarText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: colors.mintDeep,
+  },
+  recapIdentityText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  recapName: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  recapRating: {
+    marginTop: 6,
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  recapLessons: {
+    marginBottom: 12,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  recapHeart: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.chipBg,
+  },
+  recapSplit: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  recapSplitMain: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 14,
+  },
+  recapZoneBody: {
+    paddingTop: 30,
+    paddingBottom: 10,
+    alignItems: 'flex-start',
+  },
+  recapSubjectList: {
+    height: 83,
+    gap: 4,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    alignSelf: 'stretch',
+  },
+  recapPriceBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingTop: 18,
+  },
+  recapLabelFloat: {
+    position: 'absolute',
+    top: 12,
+    left: 0,
+    zIndex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: colors.mutedSoft,
+  },
+  recapPriceLabel: {
+    left: 14,
+  },
+  recapPricePane: {
+    width: 118,
+    paddingLeft: 14,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: colors.border,
+  },
+  recapLevelRow: {
+    flex: 1,
+    minHeight: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  recapRow: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    minHeight: 0,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  recapLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: colors.mutedSoft,
+    marginBottom: 4,
+  },
+  recapValue: {
+    fontSize: 19,
+    lineHeight: 25,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  recapTravel: {
+    marginTop: 4,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  recapPrice: {
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '800',
+    color: colors.ink,
   },
   cardBodyContent: {
     flexGrow: 1,
@@ -1452,8 +1988,238 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     flexBasis: 'auto',
   },
+  detailHeroCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    alignItems: 'center',
+    paddingTop: 28,
+    paddingBottom: 22,
+    paddingHorizontal: 20,
+    ...shadows.soft,
+  },
+  detailHeroHeart: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.chipBg,
+  },
+  detailHeroAvatar: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: colors.mintSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  detailHeroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  detailHeroInitials: {
+    fontSize: 36,
+    fontWeight: '800',
+    color: colors.mintDeep,
+  },
+  detailHeroName: {
+    marginTop: 14,
+    fontSize: 28,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailHeroHeadline: {
+    marginTop: 6,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
+    textAlign: 'center',
+    color: colors.ink,
+  },
+  detailHeroCity: {
+    marginTop: 6,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  detailStats: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  detailStat: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    ...shadows.soft,
+  },
+  detailStatValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailStatLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.mutedSoft,
+  },
+  detailBlockCard: {
+    marginTop: 12,
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    ...shadows.soft,
+  },
+  detailBlockTitle: {
+    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    color: colors.mintDeep,
+  },
+  detailBlockText: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: colors.ink,
+  },
+  detailPriceHero: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailPriceUnit: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  detailChipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  detailChip: {
+    backgroundColor: colors.badgeMint,
+    borderRadius: radii.chip,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  detailChipLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.mintDeep,
+  },
+  detailFormatCard: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  detailFormatTitle: {
+    marginBottom: 4,
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailReview: {
+    marginTop: 14,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  detailReviewLast: {
+    paddingBottom: 0,
+    borderBottomWidth: 0,
+  },
+  detailReviewHint: {
+    marginTop: 8,
+    marginBottom: 2,
+    fontSize: 13,
+    color: colors.mutedSoft,
+  },
+  detailReviewHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  detailReviewAuthor: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailReviewDate: {
+    fontSize: 13,
+    color: colors.mutedSoft,
+  },
+  detailReviewRating: {
+    marginTop: 4,
+    marginBottom: 6,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: colors.star,
+  },
+  detailSection: {
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  detailSectionLabel: {
+    marginBottom: 6,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: colors.mutedSoft,
+  },
+  detailValue: {
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  detailPrice: {
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  detailFormatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  detailFormatYes: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.mintDeep,
+  },
+  detailFormatNo: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.mutedSoft,
+  },
   detailBlock: {
     marginTop: 16,
+  },
+  detailMessageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
   },
   detailFooter: {
     position: 'absolute',

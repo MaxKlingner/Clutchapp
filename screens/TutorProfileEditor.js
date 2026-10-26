@@ -18,7 +18,9 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   HOURLY_RATES,
   SPECIALTIES,
+  STUDENT_LEVELS,
   STUDY_YEARS,
+  FORMAT_AT_STUDENT,
   TEACHING_FORMATS,
 } from '../lib/tutorConstants';
 import { BELGIAN_LOCATIONS, resolveLocationQuery } from '../lib/geo';
@@ -75,8 +77,9 @@ export default function TutorProfileEditor() {
   const [bio, setBio] = useState('');
   const [specialties, setSpecialties] = useState([]);
   const [teachingFormats, setTeachingFormats] = useState([]);
+  const [taughtLevels, setTaughtLevels] = useState([]);
   const [hourlyRate, setHourlyRate] = useState(25);
-  const [studyYear, setStudyYear] = useState('Master 1');
+  const [studyYear, setStudyYear] = useState('Master');
   const [city, setCity] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [latitude, setLatitude] = useState(null);
@@ -112,8 +115,9 @@ export default function TutorProfileEditor() {
       setTeachingFormats(
         profile.teachingFormats?.length ? profile.teachingFormats : []
       );
+      setTaughtLevels(profile.taughtLevels?.length ? profile.taughtLevels : []);
       setHourlyRate(profile.hourlyRate || 25);
-      setStudyYear(profile.studyYear || 'Master 1');
+      setStudyYear(profile.studyYear || 'Master');
       setCity(profile.city || '');
       setPostalCode(profile.postalCode || '');
       setLatitude(profile.latitude ?? null);
@@ -142,22 +146,32 @@ export default function TutorProfileEditor() {
     );
   }
 
-  function toggleTeachingFormat(label) {
-    setTeachingFormats((prev) =>
+  function toggleTaughtLevel(label) {
+    setTaughtLevels((prev) =>
       prev.includes(label)
         ? prev.filter((item) => item !== label)
         : [...prev, label]
     );
   }
 
+  function toggleTeachingFormat(label) {
+    setTeachingFormats((prev) => {
+      const selected = prev.includes(label);
+      if (label === FORMAT_AT_STUDENT) {
+        return selected ? [] : [FORMAT_AT_STUDENT];
+      }
+      const withoutStudent = prev.filter((item) => item !== FORMAT_AT_STUDENT);
+      return selected
+        ? withoutStudent.filter((item) => item !== label)
+        : [...withoutStudent, label];
+    });
+  }
+
   function applyResolvedLocation(query) {
     const resolved = resolveLocationQuery(query);
     if (!resolved) return false;
     setCity(resolved.name);
-    const match = BELGIAN_LOCATIONS.find((loc) => loc.name === resolved.name);
-    if (match?.postalCodes?.[0]) {
-      setPostalCode(match.postalCodes[0]);
-    }
+    if (resolved.postalCode) setPostalCode(resolved.postalCode);
     setLatitude(resolved.latitude);
     setLongitude(resolved.longitude);
     return true;
@@ -263,7 +277,7 @@ export default function TutorProfileEditor() {
     if (!teachingFormats.length) {
       Alert.alert(
         'Formats de cours',
-        'Choisis au moins un format (présentiel, domicile ou en ligne).'
+        'Choisis au moins un format (chez l’élève, chez le professeur ou en ligne).'
       );
       return;
     }
@@ -288,9 +302,8 @@ export default function TutorProfileEditor() {
         nextCity = resolved.name;
         nextLat = resolved.latitude;
         nextLng = resolved.longitude;
-        const match = BELGIAN_LOCATIONS.find((loc) => loc.name === resolved.name);
-        if (!nextPostal && match?.postalCodes?.[0]) {
-          nextPostal = match.postalCodes[0];
+        if (!nextPostal && resolved.postalCode) {
+          nextPostal = resolved.postalCode;
         }
       }
 
@@ -301,6 +314,7 @@ export default function TutorProfileEditor() {
         teachingFormats,
         hourlyRate,
         studyYear,
+        taughtLevels,
         city: nextCity,
         postalCode: nextPostal,
         latitude: nextLat,
@@ -579,7 +593,7 @@ export default function TutorProfileEditor() {
         })}
       </ScrollView>
 
-      <Text style={styles.label}>Année d’étude</Text>
+      <Text style={styles.label}>Niveau d’études</Text>
       <View style={styles.chipWrap}>
         {STUDY_YEARS.map((year) => {
           const active = studyYear === year;
@@ -594,6 +608,27 @@ export default function TutorProfileEditor() {
                 style={[styles.chipLabel, active && styles.chipLabelActive]}
               >
                 {year}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Text style={styles.label}>Niveaux d’élèves</Text>
+      <View style={styles.chipWrap}>
+        {STUDENT_LEVELS.map((level) => {
+          const active = taughtLevels.includes(level);
+          return (
+            <Pressable
+              key={level}
+              style={[styles.chip, active && styles.chipActive]}
+              onPress={() => toggleTaughtLevel(level)}
+              disabled={saving}
+            >
+              <Text
+                style={[styles.chipLabel, active && styles.chipLabelActive]}
+              >
+                {level}
               </Text>
             </Pressable>
           );

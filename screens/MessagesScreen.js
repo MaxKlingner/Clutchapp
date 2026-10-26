@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
   Pressable,
   StyleSheet,
@@ -13,7 +12,7 @@ import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/nativ
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, radii, shadows } from '../constants/theme';
+import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { MATCH_STATUS } from '../lib/tutorConstants';
@@ -25,8 +24,6 @@ import {
   fetchTutorMatchRequests,
 } from '../lib/supabase';
 import ChatScreen from './ChatScreen';
-
-const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
 
 function getInitials(name) {
   return String(name || '?')
@@ -266,21 +263,12 @@ export default function MessagesScreen() {
       <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
 
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.container}>
-          <View style={styles.topBar}>
-            <View style={styles.topBarText}>
-              <Text style={styles.eyebrow}>Clutch</Text>
-              <Text style={styles.title}>
-                {isTutor ? 'Demandes' : 'Messages'}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.subtitle}>
-            {isTutor
-              ? 'Parents qui t’ont envoyé une demande de cours.'
-              : 'Tes conversations avec les tuteurs.'}
+        <View style={styles.header}>
+          <Text style={styles.title}>
+            {isTutor ? 'Demandes' : 'Messages'}
           </Text>
-
+        </View>
+        <View style={styles.container}>
           {loading ? (
             <View style={styles.centered}>
               <ActivityIndicator size="large" color={colors.mintDeep} />
@@ -344,33 +332,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 8,
   },
-  topBar: {
-    marginBottom: 6,
-    minHeight: 52,
+  header: {
+    minHeight: 64,
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 18,
     justifyContent: 'center',
-  },
-  topBarText: {
-    gap: 2,
-  },
-  eyebrow: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    color: 'rgba(255,255,255,0.82)',
-    textTransform: 'uppercase',
   },
   title: {
     fontSize: 28,
     fontWeight: '800',
     color: colors.white,
-  },
-  subtitle: {
-    marginBottom: 18,
-    fontSize: 15,
-    lineHeight: 22,
-    color: 'rgba(255,255,255,0.92)',
   },
   centered: {
     flex: 1,
@@ -380,7 +353,6 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingBottom: 28,
-    paddingTop: 4,
   },
   emptyList: {
     flexGrow: 1,

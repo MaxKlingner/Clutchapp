@@ -1,16 +1,23 @@
 /**
  * Dynamic Expo config so Dev Client and TestFlight can coexist on the same iPhone.
- * APP_VARIANT=development → CLUTCH Dev (com.maxklingner.clutch.dev)
- * otherwise → CLUTCH (com.maxklingner.clutch) for preview/production
+ *
+ * APP_VARIANT=development → Clutch Dev (com.maxklingner.clutch.dev)
+ * APP_VARIANT=preview     → Clutch Dev name, same bundle as store (internal/preview builds)
+ * otherwise / production  → Clutch (com.maxklingner.clutch) — TestFlight / App Store
  */
-const IS_DEV = process.env.APP_VARIANT === 'development';
+const APP_VARIANT = process.env.APP_VARIANT ?? 'production';
+const IS_DEV = APP_VARIANT === 'development';
+const IS_PREVIEW = APP_VARIANT === 'preview';
+const IS_DEV_OR_PREVIEW = IS_DEV || IS_PREVIEW;
+
+const displayName = IS_DEV_OR_PREVIEW ? 'Clutch Dev' : 'Clutch';
 
 export default {
   expo: {
-    name: IS_DEV ? 'CLUTCH Dev' : 'CLUTCH',
+    name: displayName,
     slug: 'clutch',
     scheme: IS_DEV ? 'clutch-dev' : 'clutch',
-    version: '1.0.0',
+    version: '1.0.2',
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'light',
@@ -21,10 +28,13 @@ export default {
     },
     ios: {
       supportsTablet: true,
+      // buildNumber géré à distance (eas.json appVersionSource: remote + autoIncrement)
       bundleIdentifier: IS_DEV
         ? 'com.maxklingner.clutch.dev'
         : 'com.maxklingner.clutch',
       infoPlist: {
+        CFBundleDisplayName: displayName,
+        CFBundleName: displayName,
         ITSAppUsesNonExemptEncryption: false,
       },
     },
@@ -36,6 +46,7 @@ export default {
         backgroundColor: '#A8E6CF',
         foregroundImage: './assets/icon.png',
       },
+      label: displayName,
     },
     web: {
       favicon: './assets/icon.png',
@@ -43,6 +54,13 @@ export default {
     plugins: [
       'expo-secure-store',
       'expo-dev-client',
+      [
+        'expo-location',
+        {
+          locationWhenInUsePermission:
+            'Clutch utilise ta position pour trouver des tuteurs autour de toi.',
+        },
+      ],
       [
         'expo-image-picker',
         {
@@ -64,7 +82,7 @@ export default {
       eas: {
         projectId: '4fd6a13e-183f-440b-89b9-21579c91faed',
       },
-      appVariant: IS_DEV ? 'development' : 'default',
+      appVariant: APP_VARIANT,
     },
     owner: 'maxklingner',
   },

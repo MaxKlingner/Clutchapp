@@ -1,6 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Keyboard,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -15,7 +23,9 @@ import WalletScreen from './screens/WalletScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
+import WelcomeScreen from './screens/WelcomeScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
+import { ParentSearchProvider } from './lib/ParentSearchContext';
 import TutorHomeScreen from './screens/TutorHomeScreen';
 import TutorProfileEditScreen from './screens/TutorProfileEditScreen';
 import {
@@ -144,14 +154,76 @@ function TutorTabs() {
   );
 }
 
-function AuthNavigator() {
-  const [mode, setMode] = useState('signIn');
+function ParentExperience() {
+  return (
+    <ParentSearchProvider>
+      <ParentTabs key="parent-tabs" />
+    </ParentSearchProvider>
+  );
+}
 
-  if (mode === 'signUp') {
-    return <SignUpScreen onGoToSignIn={() => setMode('signIn')} />;
+function AuthNavigator() {
+  const { width } = useWindowDimensions();
+  const [panel, setPanel] = useState(null);
+  const translateX = useRef(new Animated.Value(width)).current;
+
+  function open(next) {
+    if (panel == null) translateX.setValue(width);
+    setPanel(next);
   }
 
-  return <SignInScreen onGoToSignUp={() => setMode('signUp')} />;
+  function close() {
+    translateX.stopAnimation();
+    Keyboard.dismiss();
+    Animated.timing(translateX, {
+      toValue: width,
+      duration: 250,
+      easing: Easing.bezier(0.38, 0.7, 0.125, 1),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setPanel(null);
+    });
+  }
+
+  useLayoutEffect(() => {
+    if (!panel) return undefined;
+    const anim = Animated.timing(translateX, {
+      toValue: 0,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [panel, translateX]);
+
+  return (
+    <View style={styles.authHost}>
+      <View style={styles.authHost} pointerEvents={panel ? 'none' : 'auto'}>
+        <WelcomeScreen
+          onSignIn={() => open('signIn')}
+          onSignUp={() => open('signUp')}
+        />
+      </View>
+      {panel ? (
+        <Animated.View
+          style={[styles.authSheet, { transform: [{ translateX }] }]}
+        >
+          {panel === 'signUp' ? (
+            <SignUpScreen
+              onBack={close}
+              onGoToSignIn={() => open('signIn')}
+            />
+          ) : (
+            <SignInScreen
+              onBack={close}
+              onGoToSignUp={() => open('signUp')}
+            />
+          )}
+        </Animated.View>
+      ) : null}
+    </View>
+  );
 }
 
 function RoleGate() {
@@ -199,7 +271,7 @@ function RoleGate() {
     return <TutorTabs key="tutor-tabs" />;
   }
 
-  return <ParentTabs key="parent-tabs" />;
+  return <ParentExperience key="parent-experience" />;
 }
 
 function RootNavigator() {
@@ -256,5 +328,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F3F6F4',
+  },
+  authHost: {
+    flex: 1,
+  },
+  authSheet: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#111111',
+    shadowColor: '#000000',
+    shadowOffset: { width: -8, height: 0 },
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 12,
   },
 });

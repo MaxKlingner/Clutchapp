@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, radii, shadows } from '../constants/theme';
+import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import {
@@ -23,31 +22,44 @@ import {
   ensureWallet,
   fetchMatches,
   fetchPaymentTransactions,
+  fetchWalletTopups,
   getTutorWithdrawableBalance,
 } from '../lib/supabase';
 import { openStripeCheckoutTest, stripeConfig } from '../services/stripe';
 
 const AMOUNT_PRESETS = [20, 50, 100];
 const LESSON_AMOUNT = 20;
-const MINT_BAND_H = Math.round(Dimensions.get('window').height * 0.22);
+
+function formatMoney(value) {
+  const amount = Number(value);
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return new Intl.NumberFormat('fr-BE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(safe);
+}
+
+function mergeOperations(payments, topups) {
+  const byId = new Map();
+  for (const item of [...payments, ...topups]) {
+    if (item?.id) byId.set(item.id, item);
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
 
 function formatDate(value) {
   if (!value) return '';
   try {
     return new Date(value).toLocaleDateString('fr-FR', {
-      day: '2-digit',
+      day: 'numeric',
       month: 'short',
       year: 'numeric',
     });
   } catch {
     return '';
   }
-}
-
-function statusLabel(status) {
-  if (status === 'disputed') return 'Litige';
-  if (status === 'refunded') return 'Remboursé';
-  return 'Payé';
 }
 
 export default function WalletScreen() {
@@ -75,15 +87,16 @@ export default function WalletScreen() {
         setWalletLoading(true);
         try {
           if (isParent) {
-            const [wallet, txs] = await Promise.all([
+            const [wallet, txs, topups] = await Promise.all([
               ensureWallet(userId, 50),
               fetchPaymentTransactions(userId, 'parent'),
+              fetchWalletTopups(userId),
             ]);
             if (!cancelled) {
               setBalance(wallet.balance);
               setAvailable(wallet.balance);
               setFrozen(0);
-              setTransactions(txs);
+              setTransactions(mergeOperations(txs, topups));
             }
           } else {
             const [summary, txs] = await Promise.all([
@@ -152,6 +165,19 @@ export default function WalletScreen() {
         const wallet = await creditWallet(userId, topUpAmount);
         setBalance(wallet.balance);
         setAvailable(wallet.balance);
+        if (wallet.topup) {
+          setTransactions((prev) =>
+            mergeOperations(prev, [
+              {
+                id: `topup-${wallet.topup.id}`,
+                amount: wallet.topup.amount,
+                status: 'topup',
+                isFrozen: false,
+                createdAt: wallet.topup.createdAt,
+              },
+            ])
+          );
+        }
         Alert.alert(
           'Paiement Stripe réussi',
           `+${topUpAmount} € crédités.\nNouveau solde : ${wallet.balance.toFixed(2)} €`
@@ -269,209 +295,258 @@ export default function WalletScreen() {
     }
   }
 
+  const shownBalance = isParent ? balance : available;
+  const heroCaption = isParent
+    ? 'Disponible pour régler un cours'
+    : frozen > 0
+      ? `${formatMoney(frozen)} € en cours de vérification`
+      : 'Disponible au retrait';
+
   return (
     <View style={styles.root}>
       <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
-
       <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Portefeuille</Text>
+        </View>
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.topBar}>
-            <Text style={styles.eyebrow}>Clutch</Text>
-            <Text style={styles.title}>Portefeuille</Text>
+          <View style={styles.notice}>
+          <Ionicons
+            name="information-circle-outline"
+            size={20}
+            color={colors.mintDeep}
+          />
+          <Text style={styles.noticeText}>
+            Le paiement via Clutch accroît nettement la visibilité du professeur
+            et assure la continuité de la plateforme. Il n’est cependant pas
+            obligatoire.
+          </Text>
+        </View>
+
+        <View style={styles.hero}>
+          <Text style={styles.heroLabel}>
+            {isParent ? 'Solde' : 'Disponible'}
+          </Text>
+          {walletLoading ? (
+            <ActivityIndicator
+              color={colors.ink}
+              style={styles.heroSpinner}
+            />
+          ) : (
+            <Text style={styles.heroAmount}>{formatMoney(shownBalance)} €</Text>
+          )}
+          <Text style={styles.heroCaption}>{heroCaption}</Text>
+        </View>
+
+        {!isParent ? (
+          <View style={styles.statRow}>
+            <View style={styles.stat}>
+              <Text style={styles.statValue}>{formatMoney(balance)} €</Text>
+              <Text style={styles.statLabel}>Total</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.stat}>
+              <Text style={styles.statValue}>{formatMoney(frozen)} €</Text>
+              <Text style={styles.statLabel}>Gelé</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.stat}>
+              <Text style={styles.statValue}>{formatMoney(withdrawn)} €</Text>
+              <Text style={styles.statLabel}>Retiré</Text>
+            </View>
           </View>
-          <Text style={styles.subtitle}>
+        ) : null}
+
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>
+            {isParent ? 'Recharger' : 'Retirer'}
+          </Text>
+          <Text style={styles.panelHint}>
             {isParent
-              ? 'Solde, recharges et historique des paiements'
-              : 'Gains, retraits et historique des paiements'}
+              ? 'Pour payer un cours dans la messagerie.'
+              : 'Depuis ton solde disponible.'}
           </Text>
 
-          <View style={styles.walletCard}>
-            <View style={styles.walletCardHeader}>
-              <View style={styles.walletIcon}>
-                <Ionicons name="wallet" size={20} color={colors.mintDeep} />
-              </View>
-              <Text style={styles.walletEyebrow}>
-                {isParent ? 'Mon solde' : 'Disponible au retrait'}
-              </Text>
-            </View>
-
-            {walletLoading ? (
-              <ActivityIndicator
-                color={colors.mintDeep}
-                style={{ marginVertical: 16 }}
-              />
-            ) : (
-              <Text style={styles.balance}>
-                {(isParent ? balance : available).toFixed(2)} €
-              </Text>
-            )}
-
-            <Text style={styles.walletHint}>
-              {isParent
-                ? 'Recharge via Stripe Checkout (mode test — aucun vrai débit)'
-                : `Solde total : ${balance.toFixed(2)} €${
-                    frozen > 0 ? ` · ${frozen.toFixed(2)} € gelés` : ''
-                  }${withdrawn > 0 ? ` · ${withdrawn.toFixed(0)} € retirés` : ''}`}
-            </Text>
-
-            {isParent ? (
-              <>
-                <Text style={styles.amountLabel}>Montant à recharger</Text>
-                <View style={styles.amountRow}>
-                  {AMOUNT_PRESETS.map((amount) => {
-                    const active = !customAmount && selectedAmount === amount;
-                    return (
-                      <Pressable
-                        key={amount}
-                        style={[styles.chip, active && styles.chipActive]}
-                        onPress={() => {
-                          setSelectedAmount(amount);
-                          setCustomAmount('');
-                        }}
-                        disabled={busy}
-                      >
-                        <Text
-                          style={[
-                            styles.chipLabel,
-                            active && styles.chipLabelActive,
-                          ]}
-                        >
-                          {amount} €
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                <TextInput
-                  style={styles.amountInput}
-                  value={customAmount}
-                  onChangeText={setCustomAmount}
-                  placeholder="Ou montant personnalisé (€)"
-                  placeholderTextColor={colors.mutedSoft}
-                  keyboardType="decimal-pad"
-                  editable={!busy}
-                />
-
+          <View style={styles.amountRow}>
+            {AMOUNT_PRESETS.map((amount) => {
+              const active = isParent
+                ? !customAmount && selectedAmount === amount
+                : selectedAmount === amount;
+              return (
                 <Pressable
+                  key={amount}
                   style={[
-                    styles.button,
-                    styles.topUpButton,
-                    busy && styles.buttonDisabled,
+                    styles.chip,
+                    isParent && styles.chipOutline,
+                    active && (isParent ? styles.chipActiveSoft : styles.chipActive),
                   ]}
-                  onPress={onRecharge}
+                  onPress={() => {
+                    setSelectedAmount(amount);
+                    if (isParent) setCustomAmount('');
+                  }}
                   disabled={busy}
                 >
-                  {busy ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <Text style={styles.buttonLabel}>
-                      Recharger {topUpAmount} €
-                    </Text>
-                  )}
+                  <Text
+                    style={[
+                      styles.chipLabel,
+                      active &&
+                        (isParent
+                          ? styles.chipLabelActiveSoft
+                          : styles.chipLabelActive),
+                    ]}
+                  >
+                    {amount} €
+                  </Text>
                 </Pressable>
-
-                <Pressable
-                  style={[
-                    styles.button,
-                    styles.lessonButton,
-                    busy && styles.buttonDisabled,
-                  ]}
-                  onPress={onSimulateLessonPayment}
-                  disabled={busy}
-                >
-                  {busy ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <Text style={styles.buttonLabel}>
-                      [TEST] Fin de cours (−{LESSON_AMOUNT} €)
-                    </Text>
-                  )}
-                </Pressable>
-              </>
-            ) : (
-              <>
-                <View style={styles.amountRow}>
-                  {AMOUNT_PRESETS.map((amount) => {
-                    const active = selectedAmount === amount;
-                    return (
-                      <Pressable
-                        key={amount}
-                        style={[styles.chip, active && styles.chipActive]}
-                        onPress={() => setSelectedAmount(amount)}
-                        disabled={busy}
-                      >
-                        <Text
-                          style={[
-                            styles.chipLabel,
-                            active && styles.chipLabelActive,
-                          ]}
-                        >
-                          {amount} €
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                <Pressable
-                  style={[
-                    styles.button,
-                    styles.withdrawButton,
-                    busy && styles.buttonDisabled,
-                  ]}
-                  onPress={onWithdraw}
-                  disabled={busy}
-                >
-                  {busy ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <Text style={styles.buttonLabel}>
-                      Retirer {selectedAmount} €
-                    </Text>
-                  )}
-                </Pressable>
-              </>
-            )}
+              );
+            })}
           </View>
 
-          <Text style={styles.sectionTitle}>Historique</Text>
-          {walletLoading ? (
-            <ActivityIndicator color={colors.mintDeep} />
-          ) : transactions.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyHistory}>
-                Aucune transaction pour le moment.
+          {isParent ? (
+            <TextInput
+              style={styles.amountInput}
+              value={customAmount}
+              onChangeText={setCustomAmount}
+              placeholder="Autre montant"
+              placeholderTextColor={colors.mutedSoft}
+              keyboardType="decimal-pad"
+              editable={!busy}
+            />
+          ) : null}
+
+          <Pressable
+            style={[
+              styles.button,
+              isParent && styles.buttonSoft,
+              busy && styles.buttonDisabled,
+            ]}
+            onPress={isParent ? onRecharge : onWithdraw}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator color={isParent ? colors.ink : colors.white} />
+            ) : (
+              <Text
+                style={[
+                  styles.buttonLabel,
+                  isParent && styles.buttonLabelSoft,
+                ]}
+              >
+                {isParent
+                  ? `Recharger ${topUpAmount} €`
+                  : `Retirer ${selectedAmount} €`}
               </Text>
-            </View>
-          ) : (
-            transactions.map((tx) => (
-              <View key={tx.id} style={styles.txRow}>
-                <View style={styles.txLeft}>
-                  <Text style={styles.txStatus}>{statusLabel(tx.status)}</Text>
-                  <Text style={styles.txDate}>{formatDate(tx.createdAt)}</Text>
-                </View>
-                <Text
+            )}
+          </Pressable>
+        </View>
+
+        {isParent ? (
+          <Pressable
+            style={styles.testLink}
+            onPress={onSimulateLessonPayment}
+            disabled={busy}
+          >
+            <Text style={styles.testLinkLabel}>
+              Simuler une fin de cours (−{LESSON_AMOUNT} €)
+            </Text>
+          </Pressable>
+        ) : null}
+
+        <View style={styles.historyHeader}>
+          <Text style={styles.sectionTitle}>Activité</Text>
+          {!walletLoading ? (
+            <Text style={styles.historyCount}>{transactions.length}</Text>
+          ) : null}
+        </View>
+
+        {walletLoading ? (
+          <ActivityIndicator color={colors.mintDeep} style={styles.historySpinner} />
+        ) : transactions.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons name="receipt-outline" size={28} color={colors.mutedSoft} />
+            <Text style={styles.emptyTitle}>Aucune opération</Text>
+            <Text style={styles.emptyHistory}>
+              {isParent
+                ? 'Tes recharges et paiements de cours apparaîtront ici.'
+                : 'Tes encaissements apparaîtront ici.'}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.historyCard}>
+            {transactions.map((tx, index) => {
+              const disputed = tx.status === 'disputed';
+              const refunded = tx.status === 'refunded';
+              const topup = tx.status === 'topup';
+              const outgoing = isParent && !refunded && !topup;
+              const icon = topup
+                ? 'add-circle-outline'
+                : disputed
+                  ? 'alert-circle-outline'
+                  : refunded
+                    ? 'arrow-undo-outline'
+                    : isParent
+                      ? 'arrow-up-outline'
+                      : 'arrow-down-outline';
+              return (
+                <View
+                  key={tx.id}
                   style={[
-                    styles.txAmount,
-                    tx.status === 'refunded' && styles.txAmountMuted,
+                    styles.txRow,
+                    index < transactions.length - 1 && styles.txRowBorder,
                   ]}
                 >
-                  {isParent ? '−' : '+'}
-                  {Number(tx.amount).toFixed(2)} €
-                </Text>
-              </View>
-            ))
-          )}
-        </ScrollView>
+                  <View
+                    style={[
+                      styles.txIcon,
+                      disputed && styles.txIconWarn,
+                    ]}
+                  >
+                    <Ionicons
+                      name={icon}
+                      size={18}
+                      color={disputed ? '#9B1C1C' : colors.ink}
+                    />
+                  </View>
+                  <View style={styles.txLeft}>
+                    <Text style={styles.txStatus}>
+                      {txTitle(tx.status, isParent)}
+                    </Text>
+                    <Text style={styles.txDate}>
+                      {formatDate(tx.createdAt)}
+                      {tx.isFrozen ? ' · Fonds gelés' : ''}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.txAmount,
+                      outgoing && styles.txAmountOut,
+                      refunded && styles.txAmountMuted,
+                    ]}
+                  >
+                    {outgoing ? '−' : '+'}
+                    {formatMoney(tx.amount)} €
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
       </SafeAreaView>
     </View>
   );
+}
+
+function txTitle(status, isParent) {
+  if (status === 'topup') return 'Recharge';
+  if (status === 'disputed') return 'Litige';
+  if (status === 'refunded') return 'Remboursement';
+  return isParent ? 'Cours réglé' : 'Cours encaissé';
 }
 
 const styles = StyleSheet.create({
@@ -490,35 +565,106 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'transparent',
   },
+  header: {
+    minHeight: 64,
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 18,
+    justifyContent: 'center',
+  },
   scroll: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   container: {
     paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 40,
-  },
-  topBar: {
-    marginBottom: 6,
-  },
-  eyebrow: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    color: 'rgba(255,255,255,0.82)',
-    textTransform: 'uppercase',
+    paddingBottom: 36,
   },
   title: {
-    marginTop: 2,
     fontSize: 28,
     fontWeight: '800',
     color: colors.white,
   },
-  subtitle: {
-    marginBottom: 18,
+  hero: {
+    backgroundColor: colors.card,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 20,
+    ...shadows.soft,
+  },
+  heroLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.mutedSoft,
+  },
+  heroSpinner: {
+    marginVertical: 18,
+    alignSelf: 'flex-start',
+  },
+  heroAmount: {
+    marginTop: 8,
+    fontSize: 40,
+    fontWeight: '800',
+    letterSpacing: -0.8,
+    color: colors.ink,
+  },
+  heroCaption: {
+    marginTop: 6,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.muted,
+  },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    paddingVertical: 14,
+    ...shadows.soft,
+  },
+  stat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: colors.border,
+  },
+  statValue: {
     fontSize: 15,
-    lineHeight: 22,
-    color: 'rgba(255,255,255,0.92)',
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  statLabel: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.mutedSoft,
+  },
+  panel: {
+    marginTop: 12,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    ...shadows.soft,
+  },
+  panelTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  panelHint: {
+    marginTop: 2,
+    marginBottom: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
   },
   walletCard: {
     backgroundColor: colors.card,
@@ -555,9 +701,15 @@ const styles = StyleSheet.create({
   },
   walletHint: {
     marginTop: 4,
-    marginBottom: 16,
+    marginBottom: 10,
     fontSize: 14,
     lineHeight: 20,
+    color: colors.muted,
+  },
+  paymentNotice: {
+    marginBottom: 16,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.muted,
   },
   amountLabel: {
@@ -568,57 +720,59 @@ const styles = StyleSheet.create({
   },
   amountRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
+    gap: 6,
+    marginBottom: 8,
   },
   chip: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1.5,
     borderColor: colors.border,
     backgroundColor: colors.page,
-    paddingVertical: 10,
+    paddingVertical: 6,
     alignItems: 'center',
   },
   chipActive: {
-    backgroundColor: colors.mintDeep,
-    borderColor: colors.mintDeep,
+    backgroundColor: colors.ink,
+    borderColor: colors.ink,
   },
   chipLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
-    color: colors.mintDeep,
+    color: colors.ink,
   },
   chipLabelActive: {
     color: colors.white,
+  },
+  chipActiveSoft: {
+    backgroundColor: colors.card,
+    borderColor: colors.black,
+    borderWidth: 2,
+  },
+  chipLabelActiveSoft: {
+    color: colors.ink,
+  },
+  chipOutline: {
+    backgroundColor: colors.card,
+    borderColor: colors.black,
+    borderWidth: 1,
   },
   amountInput: {
     borderWidth: 1.5,
     borderColor: colors.border,
     backgroundColor: colors.page,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 15,
     color: colors.ink,
-    marginBottom: 14,
+    marginBottom: 8,
   },
   button: {
-    borderRadius: radii.button,
-    paddingVertical: 14,
+    backgroundColor: colors.mintDeep,
+    borderRadius: 12,
+    paddingVertical: 10,
     alignItems: 'center',
-    ...shadows.soft,
-  },
-  topUpButton: {
-    backgroundColor: colors.mintDeep,
-  },
-  lessonButton: {
-    marginTop: 10,
-    backgroundColor: '#2F6B4F',
-  },
-  withdrawButton: {
-    backgroundColor: colors.mintDeep,
-    marginTop: 4,
   },
   buttonDisabled: {
     opacity: 0.7,
@@ -628,33 +782,109 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  buttonSoft: {
+    backgroundColor: colors.card,
+    borderWidth: 1.5,
+    borderColor: colors.black,
+  },
+  buttonLabelSoft: {
+    color: colors.ink,
+  },
+  testLink: {
+    alignSelf: 'center',
+    marginTop: 14,
+    paddingVertical: 6,
+  },
+  testLinkLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.mutedSoft,
+  },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 16,
+    backgroundColor: colors.badgeMint,
+  },
+  noticeText: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 26,
+    marginBottom: 10,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: colors.ink,
-    marginBottom: 12,
+  },
+  historyCount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.mutedSoft,
+  },
+  historySpinner: {
+    marginTop: 12,
   },
   emptyCard: {
+    alignItems: 'center',
     backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 18,
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 28,
     ...shadows.soft,
   },
+  emptyTitle: {
+    marginTop: 10,
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
   emptyHistory: {
+    marginTop: 4,
     fontSize: 14,
+    lineHeight: 20,
     color: colors.mutedSoft,
     textAlign: 'center',
+  },
+  historyCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    overflow: 'hidden',
+    ...shadows.soft,
   },
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 14,
-    marginBottom: 10,
-    ...shadows.soft,
+  },
+  txRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  txIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    backgroundColor: colors.badge,
+  },
+  txIconWarn: {
+    backgroundColor: '#FEF2F2',
   },
   txLeft: {
     flex: 1,
@@ -662,7 +892,7 @@ const styles = StyleSheet.create({
   },
   txStatus: {
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '700',
     color: colors.ink,
   },
   txDate: {
@@ -671,9 +901,12 @@ const styles = StyleSheet.create({
     color: colors.mutedSoft,
   },
   txAmount: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
-    color: colors.mintDeep,
+    color: colors.ink,
+  },
+  txAmountOut: {
+    color: colors.ink,
   },
   txAmountMuted: {
     color: colors.mutedSoft,

@@ -7,7 +7,18 @@ create table if not exists public.user_profiles (
   id uuid primary key default gen_random_uuid(),
   clerk_id text not null unique,
   role text not null check (role in ('parent', 'tutor')),
+  active_role text check (active_role is null or active_role in ('parent', 'tutor')),
+  visited_parent_at timestamptz,
+  visited_tutor_at timestamptz,
   full_name text,
+  first_name text,
+  last_name text,
+  seeking_for text check (seeking_for is null or seeking_for in ('self', 'other')),
+  city text,
+  postal_code text,
+  latitude double precision,
+  longitude double precision,
+  search_filters jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

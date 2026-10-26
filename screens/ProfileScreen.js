@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CommonActions, useNavigation } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -28,27 +28,6 @@ export default function ProfileScreen() {
 
   const isParent = role !== ROLES.TUTOR;
   const canClose = navigation.canGoBack();
-
-  function resetToHomeTabs(nextRole) {
-    const homeTab = nextRole === ROLES.TUTOR ? 'TutorHome' : 'Matchs';
-
-    // Ferme Réglages / modales et repart sur l'onglet d'accueil du rôle actuel
-    // avant que le RoleGate remonte l'autre navigateur.
-    navigation.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [
-          {
-            name: 'MainTabs',
-            state: {
-              index: 0,
-              routes: [{ name: homeTab }],
-            },
-          },
-        ],
-      })
-    );
-  }
 
   async function onSignOut() {
     if (signingOut) return;
@@ -82,9 +61,6 @@ export default function ProfileScreen() {
                 user?.fullName ||
                 [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
                 null;
-
-              // Remet la stack sur Accueil/Découvrir avant le changement de rôle
-              resetToHomeTabs(isParent ? ROLES.PARENT : ROLES.TUTOR);
 
               await switchRole(userId, nextRole, fullName);
               if (nextRole === ROLES.TUTOR) {
