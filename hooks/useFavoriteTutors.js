@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useAuth } from '@clerk/clerk-expo';
 
 import {
@@ -9,7 +9,26 @@ import {
 /**
  * Favoris tuteurs avec mise à jour optimiste.
  */
+const FavoriteTutorsContext = createContext(null);
+
+export function FavoriteTutorsProvider({ children }) {
+  const value = useFavoriteTutorsState();
+  return (
+    <FavoriteTutorsContext.Provider value={value}>
+      {children}
+    </FavoriteTutorsContext.Provider>
+  );
+}
+
 export function useFavoriteTutors() {
+  const value = useContext(FavoriteTutorsContext);
+  if (!value) {
+    throw new Error('useFavoriteTutors doit être utilisé dans FavoriteTutorsProvider.');
+  }
+  return value;
+}
+
+function useFavoriteTutorsState() {
   const { userId } = useAuth();
   const [favoriteIds, setFavoriteIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);

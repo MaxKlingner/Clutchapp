@@ -1,6 +1,6 @@
 /** Types partagés — le runtime reste en JS ; ces interfaces documentent le contrat. */
 
-export type TeachingFormat = 'Présentiel' | 'À domicile' | 'En ligne';
+export type TeachingFormat = 'Face à face' | 'À distance';
 
 export type DistanceRadiusKm = 5 | 10 | 20 | null;
 
@@ -15,6 +15,7 @@ export interface TutorProfile {
   hourlyRate: number;
   rating: number;
   reviewCount: number;
+  lessonsGiven: number;
   avatarUrl: string | null;
   city: string | null;
   postalCode: string | null;

@@ -19,8 +19,10 @@ import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 import SwipeScreen from './screens/SwipeScreen';
 import FavoritesScreen from './screens/FavoritesScreen';
 import MessagesScreen from './screens/MessagesScreen';
+import ChatScreen from './screens/ChatScreen';
 import WalletScreen from './screens/WalletScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import AccountScreen from './screens/AccountScreen';
 import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import WelcomeScreen from './screens/WelcomeScreen';
@@ -34,14 +36,22 @@ import {
   tokenCache,
 } from './lib/clerk';
 import { RoleProvider, useRole } from './lib/RoleContext';
+import { FavoriteTutorsProvider } from './hooks/useFavoriteTutors';
 import { ROLES } from './lib/roles';
 import { setupPushNotificationsForUser } from './services/notifications';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+const darkTabBar = {
+  backgroundColor: '#111111',
+  borderTopColor: '#2A2A2A',
+  paddingTop: 4,
+};
+
 const tabScreenOptions = ({ route }) => ({
   headerShown: false,
+  tabBarShowLabel: false,
   tabBarActiveTintColor: '#1B5E3B',
   tabBarInactiveTintColor: '#7A9185',
   tabBarStyle: {
@@ -60,6 +70,7 @@ const tabScreenOptions = ({ route }) => ({
       TutorHome: 'school',
       Messages: 'chatbubbles',
       Wallet: 'wallet',
+      Profile: 'person',
     };
     return <Ionicons name={icons[route.name]} size={size} color={color} />;
   },
@@ -71,22 +82,52 @@ function ParentMainTabs() {
       <Tab.Screen
         name="Matchs"
         component={SwipeScreen}
-        options={{ title: 'Découvrir' }}
+        options={{
+          title: 'Découvrir',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
       <Tab.Screen
         name="Favorites"
         component={FavoritesScreen}
-        options={{ title: 'Favoris' }}
+        options={{
+          title: 'Favoris',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
       <Tab.Screen
         name="Messages"
         component={MessagesScreen}
-        options={{ title: 'Messages' }}
+        options={{
+          title: 'Messages',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
       <Tab.Screen
         name="Wallet"
         component={WalletScreen}
-        options={{ title: 'Portefeuille' }}
+        options={{
+          title: 'Portefeuille',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          title: 'Profil',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
     </Tab.Navigator>
   );
@@ -106,12 +147,22 @@ function TutorMainTabs() {
       <Tab.Screen
         name="Messages"
         component={MessagesScreen}
-        options={{ title: 'Demandes' }}
+        options={{
+          title: 'Demandes',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
       <Tab.Screen
         name="Wallet"
         component={WalletScreen}
-        options={{ title: 'Portefeuille' }}
+        options={{
+          title: 'Portefeuille',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
     </Tab.Navigator>
   );
@@ -125,9 +176,26 @@ function ParentTabs() {
     >
       <Stack.Screen name="MainTabs" component={ParentMainTabs} />
       <Stack.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{
+          animation: 'slide_from_right',
+          gestureEnabled: true,
+          contentStyle: { backgroundColor: '#111111' },
+        }}
+      />
+      <Stack.Screen
         name="Settings"
         component={ProfileScreen}
         options={{ presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="Account"
+        component={AccountScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#111111' },
+        }}
       />
     </Stack.Navigator>
   );
@@ -141,6 +209,15 @@ function TutorTabs() {
     >
       <Stack.Screen name="MainTabs" component={TutorMainTabs} />
       <Stack.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{
+          animation: 'slide_from_right',
+          gestureEnabled: true,
+          contentStyle: { backgroundColor: '#111111' },
+        }}
+      />
+      <Stack.Screen
         name="Settings"
         component={ProfileScreen}
         options={{ presentation: 'modal' }}
@@ -149,6 +226,14 @@ function TutorTabs() {
         name="EditTutorProfile"
         component={TutorProfileEditScreen}
         options={{ presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="Account"
+        component={AccountScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#111111' },
+        }}
       />
     </Stack.Navigator>
   );
@@ -292,10 +377,12 @@ function AppContent() {
   return (
     <SafeAreaProvider>
       <RoleProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" />
-          <RootNavigator />
-        </NavigationContainer>
+        <FavoriteTutorsProvider>
+          <NavigationContainer>
+            <StatusBar style="dark" />
+            <RootNavigator />
+          </NavigationContainer>
+        </FavoriteTutorsProvider>
       </RoleProvider>
     </SafeAreaProvider>
   );

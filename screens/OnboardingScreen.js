@@ -11,7 +11,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 
 import { ROLES, saveUserRole } from '../lib/roles';
-import { ensureTutorProfile } from '../lib/supabase';
 
 export default function OnboardingScreen({ onRoleSelected, loadError }) {
   const { userId } = useAuth();
@@ -32,9 +31,6 @@ export default function OnboardingScreen({ onRoleSelected, loadError }) {
         null;
 
       await saveUserRole(userId, role, fullName);
-      if (role === ROLES.TUTOR) {
-        await ensureTutorProfile({ clerkId: userId, fullName });
-      }
       onRoleSelected?.(role);
     } catch (err) {
       setError(err?.message ?? 'Impossible d’enregistrer ton choix.');

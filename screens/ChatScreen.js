@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,13 +14,15 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@clerk/clerk-expo';
 
+import TutorProfileDetail from '../components/TutorProfileDetail';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { MATCH_STATUS } from '../lib/tutorConstants';
-import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
+import { colors, radii } from '../constants/theme';
 import {
   acceptMatchRequest,
   declineMatchRequest,
@@ -63,12 +66,18 @@ function formatMoney(amount) {
   return value.toFixed(2);
 }
 
-export default function ChatScreen({
-  match,
-  onBack,
-  onMatchUpdated,
-  onDeclined,
-}) {
+function getInitials(name) {
+  return String(name || '?')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+export default function ChatScreen({ navigation, route }) {
+  const match = route?.params?.match ?? null;
   const { userId } = useAuth();
   const { role } = useRole();
   const listRef = useRef(null);
@@ -91,6 +100,7 @@ export default function ChatScreen({
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const isTutor = role === ROLES.TUTOR;
   const isPending = matchStatus === MATCH_STATUS.PENDING;
@@ -99,6 +109,8 @@ export default function ChatScreen({
   const title = isTutor
     ? match?.parentName || 'Parent'
     : match?.tutor?.name || 'Tuteur';
+  const headerAvatar = isTutor ? null : match?.tutor?.avatarUrl || null;
+  const canOpenProfile = !isTutor && Boolean(match?.tutor?.id);
   const subtitle = isTutor
     ? isPending
       ? 'Demande en attente de ta réponse'
@@ -215,7 +227,7 @@ export default function ChatScreen({
     try {
       const updated = await acceptMatchRequest(match.id, userId);
       setMatchStatus(MATCH_STATUS.ACCEPTED);
-      onMatchUpdated?.(updated);
+      navigation.setParams({ match: updated });
       const rows = await fetchMessages(match.id);
       setMessages(rows);
       scrollToEnd();
@@ -242,7 +254,7 @@ export default function ChatScreen({
             setMatchActing(true);
             try {
               await declineMatchRequest(match.id);
-              onDeclined?.();
+              navigation.goBack();
             } catch (err) {
               Alert.alert('Erreur', err?.message ?? 'Refus impossible.');
             } finally {
@@ -503,7 +515,7 @@ export default function ChatScreen({
               disabled={busy}
             >
               {actingId === item.id ? (
-                <ActivityIndicator color="#9B1C1C" />
+                <ActivityIndicator color="#FF8A80" />
               ) : (
                 <Text style={styles.cancelButtonLabel}>
                   Annuler la demande
@@ -520,7 +532,7 @@ export default function ChatScreen({
             disabled={busy}
           >
             {actingId === item.id ? (
-              <ActivityIndicator color="#9B1C1C" />
+              <ActivityIndicator color="#FF8A80" />
             ) : (
               <Text style={styles.disputeButtonLabel}>
                 Signaler un problème
@@ -560,7 +572,7 @@ export default function ChatScreen({
 
   return (
     <View style={styles.root}>
-      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
+      <StatusBar style="light" />
       <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
         style={styles.flex}
@@ -570,11 +582,25 @@ export default function ChatScreen({
         <View style={styles.header}>
           <Pressable
             style={styles.backButton}
-            onPress={onBack}
+            onPress={() => navigation.goBack()}
             hitSlop={12}
             accessibilityLabel="Retour"
           >
-            <Ionicons name="chevron-back" size={22} color={colors.mintDeep} />
+            <Ionicons name="chevron-back" size={22} color={colors.white} />
+          </Pressable>
+          <Pressable
+            style={styles.headerAvatar}
+            onPress={() => {
+              if (canOpenProfile) setProfileOpen(true);
+            }}
+            disabled={!canOpenProfile}
+            accessibilityLabel={canOpenProfile ? 'Voir le profil' : title}
+          >
+            {headerAvatar ? (
+              <Image source={{ uri: headerAvatar }} style={styles.headerAvatarImage} />
+            ) : (
+              <Text style={styles.headerAvatarText}>{getInitials(title)}</Text>
+            )}
           </Pressable>
           <View style={styles.headerText}>
             <Text style={styles.title} numberOfLines={1}>
@@ -636,7 +662,7 @@ export default function ChatScreen({
 
         {loading ? (
           <View style={styles.centered}>
-            <ActivityIndicator size="large" color={colors.mintDeep} />
+            <ActivityIndicator size="large" color="#C7C7CC" />
           </View>
         ) : (
           <FlatList
@@ -664,7 +690,7 @@ export default function ChatScreen({
               disabled={sending}
               accessibilityLabel="Demander le paiement du cours"
             >
-              <Ionicons name="card-outline" size={22} color={colors.mintDeep} />
+              <Ionicons name="card-outline" size={22} color="#C7C7CC" />
             </Pressable>
           ) : null}
 
@@ -677,7 +703,8 @@ export default function ChatScreen({
                 ? 'Accepte la demande pour répondre…'
                 : 'Écrire un message…'
             }
-            placeholderTextColor="#7A9185"
+            placeholderTextColor="#8E8E93"
+            keyboardAppearance="dark"
             multiline
             editable={!sending && tutorCanWrite}
           />
@@ -749,7 +776,8 @@ export default function ChatScreen({
               value={customHours}
               onChangeText={setCustomHours}
               placeholder="Ou heures personnalisées"
-              placeholderTextColor="#7A9185"
+              placeholderTextColor="#8E8E93"
+            keyboardAppearance="dark"
               keyboardType="decimal-pad"
             />
 
@@ -823,7 +851,8 @@ export default function ChatScreen({
               value={reviewComment}
               onChangeText={setReviewComment}
               placeholder="Commentaire (optionnel)"
-              placeholderTextColor="#7A9185"
+              placeholderTextColor="#8E8E93"
+            keyboardAppearance="dark"
               multiline
               textAlignVertical="top"
               editable={!reviewSubmitting}
@@ -855,6 +884,11 @@ export default function ChatScreen({
         </View>
       </Modal>
       </SafeAreaView>
+      <TutorProfileDetail
+        tutor={match?.tutor}
+        visible={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      />
     </View>
   );
 }
@@ -862,18 +896,11 @@ export default function ChatScreen({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.page,
-  },
-  mintBand: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: colors.mint,
+    backgroundColor: '#111111',
   },
   safe: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: '#111111',
   },
   flex: {
     flex: 1,
@@ -882,13 +909,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    backgroundColor: colors.card,
-    borderRadius: radii.card,
-    ...shadows.soft,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#2A2A2A',
   },
   backButton: {
     width: 40,
@@ -896,7 +920,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.badgeMint,
+    backgroundColor: '#2C2C2E',
   },
   headerText: {
     flex: 1,
@@ -906,38 +930,57 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   subtitle: {
     fontSize: 13,
-    color: colors.muted,
+    color: '#A1A1A6',
+  },
+  headerAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#2C2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  headerAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  headerAvatarText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#E8E8E8',
   },
   requestBanner: {
     marginHorizontal: 16,
-    marginTop: 4,
+    marginTop: 12,
     marginBottom: 4,
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
     padding: 14,
-    ...shadows.soft,
   },
   requestBannerTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   requestBannerText: {
     marginTop: 4,
     marginBottom: 12,
     fontSize: 13,
     lineHeight: 19,
-    color: colors.muted,
+    color: '#C7C7CC',
   },
   requestBannerActions: {
     gap: 8,
   },
   requestAcceptBtn: {
-    backgroundColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
     borderRadius: radii.button,
     paddingVertical: 12,
     alignItems: 'center',
@@ -948,35 +991,37 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   requestDeclineBtn: {
-    backgroundColor: colors.white,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.button,
     paddingVertical: 11,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: colors.border,
+    borderColor: '#2A2A2A',
   },
   requestDeclineLabel: {
-    color: colors.muted,
+    color: '#C7C7CC',
     fontWeight: '700',
     fontSize: 15,
   },
   pendingParentBanner: {
     marginHorizontal: 16,
-    marginTop: 4,
+    marginTop: 12,
     marginBottom: 4,
-    backgroundColor: '#FFF8E8',
+    backgroundColor: '#1C1C1E',
     borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   pendingParentText: {
     fontSize: 13,
     lineHeight: 19,
-    color: '#7A4E00',
+    color: '#E8E8E8',
   },
   inputDisabled: {
-    backgroundColor: colors.chipBg,
-    color: colors.mutedSoft,
+    backgroundColor: '#2C2C2E',
+    color: '#8E8E93',
   },
   centered: {
     flex: 1,
@@ -990,7 +1035,7 @@ const styles = StyleSheet.create({
   },
   empty: {
     textAlign: 'center',
-    color: colors.mutedSoft,
+    color: '#A1A1A6',
     marginTop: 40,
     fontSize: 15,
   },
@@ -1003,17 +1048,18 @@ const styles = StyleSheet.create({
   },
   bubbleMine: {
     alignSelf: 'flex-end',
-    backgroundColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
   },
   bubbleTheirs: {
     alignSelf: 'flex-start',
-    backgroundColor: colors.card,
-    ...shadows.soft,
+    backgroundColor: '#1C1C1E',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
   },
   bubbleText: {
     fontSize: 15,
     lineHeight: 22,
-    color: colors.ink,
+    color: '#E8E8E8',
   },
   bubbleTextMine: {
     color: colors.white,
@@ -1024,8 +1070,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     maxWidth: '92%',
     borderWidth: 1,
-    backgroundColor: colors.card,
-    borderColor: colors.border,
+    backgroundColor: '#1C1C1E',
+    borderColor: '#2A2A2A',
   },
   paymentCardMine: {
     alignSelf: 'flex-end',
@@ -1041,34 +1087,34 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
-    color: colors.muted,
+    color: '#3DDC97',
     marginBottom: 6,
   },
   paymentTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   paymentMeta: {
     marginTop: 4,
     fontSize: 13,
-    color: colors.muted,
+    color: '#A1A1A6',
   },
   paymentNotice: {
     marginTop: 10,
     fontSize: 13,
     lineHeight: 18,
-    color: colors.muted,
+    color: '#C7C7CC',
   },
   paymentWaiting: {
     marginTop: 10,
     fontSize: 13,
     fontStyle: 'italic',
-    color: colors.mintDeep,
+    color: '#A1A1A6',
   },
   payButton: {
     marginTop: 12,
-    backgroundColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
@@ -1084,11 +1130,11 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
+    borderColor: '#3A2A2A',
+    backgroundColor: '#2C2C2E',
   },
   cancelButtonLabel: {
-    color: '#9B1C1C',
+    color: '#FF8A80',
     fontWeight: '700',
     fontSize: 14,
   },
@@ -1098,7 +1144,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   disputeButtonLabel: {
-    color: '#9B1C1C',
+    color: '#FF8A80',
     fontSize: 13,
     fontWeight: '600',
     textDecorationLine: 'underline',
@@ -1106,11 +1152,11 @@ const styles = StyleSheet.create({
   disputeHint: {
     marginTop: 10,
     fontSize: 13,
-    color: '#9B1C1C',
+    color: '#FF8A80',
     fontStyle: 'italic',
   },
   error: {
-    color: '#C0392B',
+    color: '#FF8A80',
     paddingHorizontal: 16,
     paddingBottom: 8,
     fontSize: 13,
@@ -1121,34 +1167,32 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.card,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#2A2A2A',
+    backgroundColor: '#111111',
   },
   payRequestIcon: {
     width: 44,
     height: 44,
     borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: colors.mintDeep,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.badgeMint,
+    backgroundColor: '#2C2C2E',
   },
   input: {
     flex: 1,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#2A2A2A',
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 15,
-    color: colors.ink,
-    backgroundColor: colors.page,
+    color: colors.white,
+    backgroundColor: '#1C1C1E',
   },
   sendButton: {
-    backgroundColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
     borderRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -1165,37 +1209,38 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(15, 42, 31, 0.45)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
   modalCard: {
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
     padding: 20,
-    ...shadows.card,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   modalHint: {
     marginTop: 6,
     marginBottom: 10,
     fontSize: 14,
-    color: colors.muted,
+    color: '#A1A1A6',
   },
   modalNotice: {
     marginBottom: 14,
     fontSize: 13,
     lineHeight: 18,
-    color: colors.muted,
+    color: '#C7C7CC',
   },
   modalLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.muted,
+    color: '#C7C7CC',
     marginBottom: 8,
   },
   hoursRow: {
@@ -1207,40 +1252,41 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#2A2A2A',
     paddingVertical: 10,
     alignItems: 'center',
-    backgroundColor: colors.page,
+    backgroundColor: '#111111',
   },
   hourChipActive: {
-    backgroundColor: colors.mintDeep,
-    borderColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
+    borderColor: '#1B6B45',
   },
   hourChipLabel: {
     fontWeight: '700',
-    color: colors.mintDeep,
+    color: '#E8E8E8',
   },
   hourChipLabelActive: {
     color: colors.white,
   },
   modalInput: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#2A2A2A',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
-    color: colors.ink,
+    color: colors.white,
+    backgroundColor: '#111111',
     marginBottom: 12,
   },
   modalTotal: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.mintDeep,
+    color: colors.white,
     marginBottom: 14,
   },
   modalPrimary: {
-    backgroundColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -1251,7 +1297,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalCancelLabel: {
-    color: colors.muted,
+    color: '#C7C7CC',
     fontWeight: '600',
   },
   starsRow: {
@@ -1267,7 +1313,7 @@ const styles = StyleSheet.create({
     color: colors.star,
   },
   starInactive: {
-    color: '#D1D5DB',
+    color: '#3A3A3C',
   },
   reviewComment: {
     minHeight: 88,

@@ -20,10 +20,10 @@ import {
   SPECIALTIES,
   STUDENT_LEVELS,
   STUDY_YEARS,
-  FORMAT_AT_STUDENT,
   TEACHING_FORMATS,
 } from '../lib/tutorConstants';
 import { BELGIAN_LOCATIONS, resolveLocationQuery } from '../lib/geo';
+import { fetchUserPlace } from '../lib/roles';
 import {
   ensureTutorProfile,
   updateTutorProfile,
@@ -104,10 +104,26 @@ export default function TutorProfileEditor() {
         [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
         'Nouveau tuteur';
 
-      const profile = await ensureTutorProfile({
-        clerkId: userId,
-        fullName: defaultName,
-      });
+      const profile = await ensureTutorProfile({ clerkId: userId });
+
+      if (!profile) {
+        const place = await fetchUserPlace(userId);
+        setFullName(defaultName === 'Nouveau tuteur' ? '' : defaultName);
+        setBio('');
+        setSpecialties([]);
+        setTeachingFormats([]);
+        setTaughtLevels([]);
+        setHourlyRate(25);
+        setStudyYear('Master');
+        setCity(place?.city || '');
+        setPostalCode(place?.postalCode || '');
+        setLatitude(place?.latitude ?? null);
+        setLongitude(place?.longitude ?? null);
+        setAvatarUri(null);
+        setAvatarUrlDraft('');
+        setAvatarRemoved(false);
+        return;
+      }
 
       setFullName(profile.name || defaultName);
       setBio(profile.bio || '');
@@ -155,16 +171,9 @@ export default function TutorProfileEditor() {
   }
 
   function toggleTeachingFormat(label) {
-    setTeachingFormats((prev) => {
-      const selected = prev.includes(label);
-      if (label === FORMAT_AT_STUDENT) {
-        return selected ? [] : [FORMAT_AT_STUDENT];
-      }
-      const withoutStudent = prev.filter((item) => item !== FORMAT_AT_STUDENT);
-      return selected
-        ? withoutStudent.filter((item) => item !== label)
-        : [...withoutStudent, label];
-    });
+    setTeachingFormats((prev) =>
+      prev.includes(label) ? prev.filter((item) => item !== label) : [...prev, label]
+    );
   }
 
   function applyResolvedLocation(query) {
@@ -277,7 +286,7 @@ export default function TutorProfileEditor() {
     if (!teachingFormats.length) {
       Alert.alert(
         'Formats de cours',
-        'Choisis au moins un format (chez l’élève, chez le professeur ou en ligne).'
+        'Choisis au moins un format : face à face ou à distance.'
       );
       return;
     }

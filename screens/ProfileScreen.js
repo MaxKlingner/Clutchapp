@@ -2,6 +2,8 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,28 +11,69 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 
+import { colors } from '../constants/theme';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
-import { ensureTutorProfile, resetMatchesAndMessages, resetMyTutorAnnouncement } from '../lib/supabase';
+
+function displayName(user) {
+  return (
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+    'Mon compte'
+  );
+}
+
+function initials(name) {
+  return String(name || '?')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function Row({ icon, label, onPress, danger, busy, last }) {
+  return (
+    <Pressable
+      style={[styles.row, !last && styles.rowBorder]}
+      onPress={onPress}
+      disabled={!onPress || busy}
+    >
+      <View style={[styles.rowIcon, danger && styles.rowIconDanger]}>
+        <Ionicons name={icon} size={18} color={danger ? '#FF8A80' : '#E8E8E8'} />
+      </View>
+      <Text style={[styles.rowLabel, danger && styles.rowDanger]}>{label}</Text>
+      {busy ? (
+        <ActivityIndicator color="#C7C7CC" />
+      ) : onPress ? (
+        <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
+      ) : null}
+    </Pressable>
+  );
+}
 
 export default function ProfileScreen() {
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const { signOut, userId } = useAuth();
   const { user } = useUser();
   const { role, switching, switchRole } = useRole();
   const [signingOut, setSigningOut] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [resettingAnnouncement, setResettingAnnouncement] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const isParent = role !== ROLES.TUTOR;
-  const canClose = navigation.canGoBack();
+  const isModal = navigation.getState()?.type === 'stack';
+  const name = displayName(user);
+  const email = user?.primaryEmailAddress?.emailAddress || '';
 
   async function onSignOut() {
-    if (signingOut) return;
+    if (signingOut || deleting) return;
     setSigningOut(true);
     try {
       await signOut();
@@ -40,40 +83,23 @@ export default function ProfileScreen() {
   }
 
   async function onSwitchRole() {
-    if (!userId || switching || signingOut) return;
+    if (!userId || switching || signingOut || deleting) return;
 
     const nextRole = isParent ? ROLES.TUTOR : ROLES.PARENT;
-    const label =
-      nextRole === ROLES.TUTOR
-        ? 'passer côté tuteur'
-        : 'revenir côté parent';
-
     Alert.alert(
-      'Changer de rôle',
-      `Tu vas ${label}. Ton interface sera mise à jour immédiatement.`,
+      isParent ? 'Donner des cours' : 'Chercher un cours',
+      isParent
+        ? 'Tu passes côté tuteur. Tu pourras revenir ici quand tu veux.'
+        : 'Tu repasses côté parent, pour chercher un tuteur.',
       [
         { text: 'Annuler', style: 'cancel' },
         {
-          text: 'Confirmer',
+          text: 'Continuer',
           onPress: async () => {
             try {
-              const fullName =
-                user?.fullName ||
-                [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
-                null;
-
-              await switchRole(userId, nextRole, fullName);
-              if (nextRole === ROLES.TUTOR) {
-                await ensureTutorProfile({
-                  clerkId: userId,
-                  fullName,
-                });
-              }
+              await switchRole(userId, nextRole, name === 'Mon compte' ? null : name);
             } catch (err) {
-              Alert.alert(
-                'Erreur',
-                err?.message ?? 'Impossible de changer de rôle.'
-              );
+              Alert.alert('Erreur', err?.message ?? 'Impossible de changer de côté.');
             }
           },
         },
@@ -81,65 +107,36 @@ export default function ProfileScreen() {
     );
   }
 
-  async function onResetMatches() {
-    if (resetting || resettingAnnouncement) return;
-
-    Alert.alert(
-      'Reset de test',
-      'Supprimer tous les matches et messages ? Cette action est irréversible.',
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Réinitialiser',
-          style: 'destructive',
-          onPress: async () => {
-            setResetting(true);
-            try {
-              await resetMatchesAndMessages();
-              Alert.alert(
-                'Reset OK',
-                'Matches et messages ont été réinitialisés.'
-              );
-            } catch (err) {
-              Alert.alert(
-                'Erreur',
-                err?.message ?? 'Reset impossible.'
-              );
-            } finally {
-              setResetting(false);
-            }
-          },
-        },
-      ]
-    );
+  function onEditAnnouncement() {
+    navigation.navigate('EditTutorProfile');
   }
 
-  async function onResetMyAnnouncement() {
-    if (resetting || resettingAnnouncement || !userId) return;
+  function onContact() {
+    Linking.openURL('mailto:support@clutch.education').catch(() => {
+      Alert.alert('Contact', 'Écris-nous à support@clutch.education');
+    });
+  }
 
+  function onDeleteAccount() {
+    if (!user || deleting || signingOut) return;
     Alert.alert(
-      'Reset mon annonce',
-      'Remet uniquement ton annonce tuteur à l’état « non publiée » (matières, bio, tarif). Les annonces des autres testeurs ne sont pas touchées.',
+      'Supprimer le compte',
+      'Ton compte Clutch sera effacé. Cette action est définitive.',
       [
         { text: 'Annuler', style: 'cancel' },
         {
-          text: 'Réinitialiser mon annonce',
+          text: 'Supprimer',
           style: 'destructive',
           onPress: async () => {
-            setResettingAnnouncement(true);
+            setDeleting(true);
             try {
-              await resetMyTutorAnnouncement(userId);
-              Alert.alert(
-                'Annonce réinitialisée',
-                'Ton bouton Accueil affiche à nouveau « Créer mon annonce ».'
-              );
+              await user.delete();
             } catch (err) {
               Alert.alert(
                 'Erreur',
-                err?.message ?? 'Reset de l’annonce impossible.'
+                err?.message ?? 'Impossible de supprimer le compte.'
               );
-            } finally {
-              setResettingAnnouncement(false);
+              setDeleting(false);
             }
           },
         },
@@ -148,221 +145,229 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
-        {canClose ? (
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalHeaderTitle}>Réglages</Text>
+    <View style={styles.root}>
+      {isFocused ? <StatusBar style="light" /> : null}
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.header}>
+          {isModal ? (
             <Pressable
-              style={styles.closeIconButton}
+              style={styles.closeButton}
               onPress={() => navigation.goBack()}
-              accessibilityLabel="Fermer les réglages"
+              accessibilityLabel="Fermer le profil"
               hitSlop={8}
             >
-              <Ionicons name="close" size={24} color="#1B5E3B" />
+              <Ionicons name="close" size={22} color={colors.white} />
             </Pressable>
-          </View>
-        ) : null}
-
-        {canClose ? null : <Text style={styles.title}>Réglages</Text>}
-        <Text style={styles.roleBadge}>
-          {role === ROLES.TUTOR ? 'Rôle : Tuteur' : 'Rôle : Parent'}
-        </Text>
-        <Text style={styles.subtitle}>
-          {user?.primaryEmailAddress?.emailAddress
-            ? `Connecté : ${user.primaryEmailAddress.emailAddress}`
-            : 'Compte connecté'}
-        </Text>
-
-        <Pressable
-          style={[
-            styles.button,
-            styles.switchRoleButton,
-            (switching || signingOut) && styles.buttonDisabled,
-          ]}
-          onPress={onSwitchRole}
-          disabled={switching || signingOut}
-        >
-          {switching ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonLabel}>
-              {isParent ? 'Passer côté tuteur' : 'Revenir côté parent'}
-            </Text>
-          )}
-        </Pressable>
-
-        <Pressable
-          style={[
-            styles.button,
-            styles.signOutButton,
-            signingOut && styles.buttonDisabled,
-          ]}
-          onPress={onSignOut}
-          disabled={signingOut}
-        >
-          {signingOut ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonLabel}>Se déconnecter</Text>
-          )}
-        </Pressable>
-
-        <View style={styles.devSection}>
-          <Text style={styles.devTitle}>Tests / développement</Text>
-          <Text style={styles.devHint}>
-            Outils internes — ne pas utiliser en production.
+          ) : null}
+          <Text style={styles.title}>Profil</Text>
+          <Text style={styles.subtitle}>
+            {email || (isParent ? 'Tu cherches un cours' : 'Tu donnes des cours')}
           </Text>
-          <Pressable
-            style={[
-              styles.resetTestButton,
-              (resetting || resettingAnnouncement) && styles.buttonDisabled,
-            ]}
-            onPress={onResetMatches}
-            disabled={resetting || resettingAnnouncement || signingOut}
-          >
-            {resetting ? (
-              <ActivityIndicator color="#7A4E00" />
-            ) : (
-              <Text style={styles.resetTestLabel}>
-                [TEST] Reset matches & messages
-              </Text>
-            )}
-          </Pressable>
-          <Pressable
-            style={[
-              styles.resetTestButton,
-              styles.resetAnnouncementButton,
-              (resetting || resettingAnnouncement) && styles.buttonDisabled,
-            ]}
-            onPress={onResetMyAnnouncement}
-            disabled={
-              resetting || resettingAnnouncement || signingOut || !userId
-            }
-          >
-            {resettingAnnouncement ? (
-              <ActivityIndicator color="#7A4E00" />
-            ) : (
-              <Text style={styles.resetTestLabel}>
-                [TEST] Reset mon annonce (compte actif)
-              </Text>
-            )}
-          </Pressable>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+
+        <ScrollView
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
+        >
+          <Pressable
+            style={styles.identity}
+            onPress={() => navigation.navigate('Account')}
+            accessibilityLabel="Mon compte"
+          >
+            <View style={styles.avatar}>
+              {user?.imageUrl ? (
+                <Image source={{ uri: user.imageUrl }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarText}>{initials(name)}</Text>
+              )}
+            </View>
+            <View style={styles.identityCopy}>
+              <Text style={styles.identityName} numberOfLines={1}>
+                {name}
+              </Text>
+              <Text style={styles.identityMeta} numberOfLines={1}>
+                {isParent ? 'Tu cherches un cours' : 'Tu donnes des cours'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
+          </Pressable>
+
+          <Text style={styles.section}>Compte</Text>
+          <View style={styles.card}>
+            <Row
+              icon={isParent ? 'school-outline' : 'search-outline'}
+              label={isParent ? 'Je veux donner des cours' : 'Je cherche un cours'}
+              onPress={onSwitchRole}
+              busy={switching}
+            />
+            {isParent ? null : (
+              <Row
+                icon="create-outline"
+                label="Modifier mon annonce"
+                onPress={onEditAnnouncement}
+              />
+            )}
+            <Row icon="mail-outline" label="Contacter Clutch" onPress={onContact} last />
+          </View>
+
+          <Text style={styles.section}>Session</Text>
+          <View style={styles.card}>
+            <Row
+              icon="log-out-outline"
+              label="Se déconnecter"
+              onPress={onSignOut}
+              busy={signingOut}
+              last
+            />
+          </View>
+
+          <View style={[styles.card, styles.dangerCard]}>
+            <Row
+              icon="trash-outline"
+              label="Supprimer mon compte"
+              onPress={onDeleteAccount}
+              busy={deleting}
+              danger
+              last
+            />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#111111',
+  },
   safe: {
     flex: 1,
-    backgroundColor: '#F3F6F4',
   },
-  scroll: {
-    flex: 1,
-  },
-  container: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 40,
-  },
-  modalHeader: {
-    flexDirection: 'row',
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 14,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
   },
-  modalHeaderTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#10261C',
-  },
-  closeIconButton: {
+  closeButton: {
+    position: 'absolute',
+    left: 12,
+    top: 4,
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8F5EE',
-  },
-  roleBadge: {
-    marginTop: 8,
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1B5E3B',
+    backgroundColor: '#2C2C2E',
+    zIndex: 2,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#10261C',
+    textAlign: 'center',
+    fontSize: 28,
+    fontWeight: '800',
+    color: colors.white,
   },
   subtitle: {
-    marginTop: 8,
-    marginBottom: 20,
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#4A6357',
-  },
-  button: {
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  switchRoleButton: {
-    backgroundColor: '#4338CA',
-    marginBottom: 10,
-  },
-  signOutButton: {
-    backgroundColor: '#3D5C4C',
-  },
-  buttonDisabled: {
-    opacity: 0.7,
-  },
-  buttonLabel: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  devSection: {
-    marginTop: 32,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#D8E0DB',
-  },
-  devTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    color: '#7A4E00',
-    textTransform: 'uppercase',
-  },
-  devHint: {
     marginTop: 4,
-    marginBottom: 12,
-    fontSize: 13,
-    color: '#8A7A55',
+    textAlign: 'center',
+    fontSize: 15,
+    color: '#A1A1A6',
   },
-  resetTestButton: {
-    backgroundColor: '#FFF4D6',
-    borderWidth: 1,
-    borderColor: '#E6C86A',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+  list: {
+    paddingHorizontal: 20,
+    paddingBottom: 36,
+  },
+  identity: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#1C1C1E',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    padding: 16,
+    marginBottom: 8,
   },
-  resetAnnouncementButton: {
-    marginTop: 10,
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#2C2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  resetTestLabel: {
-    color: '#7A4E00',
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+  },
+  avatarText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  identityCopy: {
+    flex: 1,
+  },
+  identityName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  identityMeta: {
+    marginTop: 4,
+    fontSize: 14,
+    color: '#A1A1A6',
+  },
+  section: {
+    marginTop: 22,
+    marginBottom: 8,
+    marginLeft: 4,
     fontSize: 13,
     fontWeight: '700',
-    textAlign: 'center',
+    color: '#8E8E93',
+  },
+  card: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    overflow: 'hidden',
+  },
+  dangerCard: {
+    marginTop: 16,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  rowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A2A',
+  },
+  rowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#2C2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowIconDanger: {
+    backgroundColor: '#3A2424',
+  },
+  rowLabel: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#E8E8E8',
+  },
+  rowDanger: {
+    color: '#FF8A80',
   },
 });

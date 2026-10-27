@@ -5,7 +5,18 @@ import { colors, shadows } from '../constants/theme';
 
 const SLIDER_THUMB = 26;
 
-export function StepSlider({ steps, indexes, onChangeIndexes, caption, minLabel, maxLabel }) {
+export function StepSlider({
+  steps,
+  indexes,
+  onChangeIndexes,
+  caption,
+  minLabel,
+  maxLabel,
+  accent = colors.mintDeep,
+  trackColor = '#E2EAE5',
+  thumbBorder,
+  labelColor = colors.mutedSoft,
+}) {
   const [trackW, setTrackW] = useState(0);
   const live = useRef({ steps, indexes, onChangeIndexes, trackW });
   live.current = { steps, indexes, onChangeIndexes, trackW };
@@ -78,7 +89,9 @@ export function StepSlider({ steps, indexes, onChangeIndexes, caption, minLabel,
 
   return (
     <View style={styles.filterSlider}>
-      <Text style={styles.filterSliderCaption}>{caption}</Text>
+      {caption ? (
+        <Text style={[styles.filterSliderCaption, { color: accent }]}>{caption}</Text>
+      ) : null}
       <View
         style={styles.filterSliderHit}
         onLayout={(event) => {
@@ -88,28 +101,37 @@ export function StepSlider({ steps, indexes, onChangeIndexes, caption, minLabel,
         }}
         {...pan.panHandlers}
       >
-        <View pointerEvents="none" style={styles.filterSliderTrack} />
+        <View
+          pointerEvents="none"
+          style={[styles.filterSliderTrack, { backgroundColor: trackColor }]}
+        />
         <View
           pointerEvents="none"
           style={[
             styles.filterSliderFill,
-            { left: fillLeft, width: Math.max(fillWidth, 0) },
+            { left: fillLeft, width: Math.max(fillWidth, 0), backgroundColor: accent },
           ]}
         />
         <View
           pointerEvents="none"
-          style={[styles.filterSliderThumb, { left: lowLeft }]}
+          style={[
+            styles.filterSliderThumb,
+            { left: lowLeft, borderColor: thumbBorder || accent },
+          ]}
         />
         {indexes.length > 1 ? (
           <View
             pointerEvents="none"
-            style={[styles.filterSliderThumb, { left: highLeft }]}
+            style={[
+              styles.filterSliderThumb,
+              { left: highLeft, borderColor: thumbBorder || accent },
+            ]}
           />
         ) : null}
       </View>
       <View style={styles.filterSliderEnds}>
-        <Text style={styles.filterSliderEnd}>{minLabel}</Text>
-        <Text style={[styles.filterSliderEnd, styles.filterSliderEndRight]}>
+        <Text style={[styles.filterSliderEnd, { color: labelColor }]}>{minLabel}</Text>
+        <Text style={[styles.filterSliderEnd, styles.filterSliderEndRight, { color: labelColor }]}>
           {maxLabel}
         </Text>
       </View>

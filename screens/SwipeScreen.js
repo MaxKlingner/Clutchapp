@@ -1,111 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   Dimensions,
   Image,
-  Modal,
-  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { initialWindowMetrics, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 
-import TutorFilterFields from '../components/TutorFilterFields';
-import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
-import {
-  fetchMatches,
-  fetchTutorProfiles,
-  fetchTutorReviews,
-  startTutorConversation,
-} from '../lib/supabase';
+import TutorProfileDetail from '../components/TutorProfileDetail';
+import TutorRefineBar from '../components/TutorRefineBar';
+import TutorSearchSheet from '../components/TutorSearchSheet';
+import { colors, radii, shadows } from '../constants/theme';
+import { fetchFavoriteTutorIds, fetchMatches, fetchTutorProfiles } from '../lib/supabase';
 import {
   MATCH_STATUS,
-  FORMAT_AT_STUDENT,
-  FORMAT_AT_TUTOR,
-  FORMAT_ONLINE,
-  TEACHING_FORMATS,
-  tutorCanTravel,
+  courseFormatLabel,
 } from '../lib/tutorConstants';
 import { useFavoriteTutors } from '../hooks/useFavoriteTutors';
 import { useParentSearch } from '../lib/ParentSearchContext';
 
-const SLIDER_THUMB = 26;
-
-const FORMAT_DETAILS = {
-  [FORMAT_AT_STUDENT]:
-    'Je me déplace chez l’élève. On s’installe au calme, avec les cours et les exercices, et j’adapte la séance à ce qui bloque.',
-  [FORMAT_AT_TUTOR]:
-    'Je reçois chez moi, dans un endroit tranquille. On a de quoi écrire, et je reprends les points un par un.',
-  [FORMAT_ONLINE]:
-    'Je donne aussi le cours en ligne, en visioconférence. On partage les exercices à l’écran et on avance ensemble.',
-};
-
-function firstPersonLevel(studyYear) {
-  if (!studyYear) return 'Je n’ai pas encore précisé mon niveau d’études.';
-  if (studyYear === 'Diplômé') return 'Je suis diplômé.';
-  if (studyYear === 'Secondaire') return 'Je suis encore en secondaire.';
-  if (studyYear === 'Doctorat') return 'Je suis en doctorat.';
-  if (studyYear === 'Bachelier') return 'Je suis en bachelier.';
-  if (studyYear === 'Master') return 'Je suis en master.';
-  return `Je suis en ${studyYear}.`;
-}
-
-function joinSubjects(subjects) {
-  if (subjects.length <= 1) return subjects[0] || '';
-  return `${subjects.slice(0, -1).join(', ')} et ${subjects[subjects.length - 1]}`;
-}
-
 const SCREEN_W = Dimensions.get('window').width;
-const SCREEN_H = Dimensions.get('window').height;
-const FILTER_SHEET_TOP = (initialWindowMetrics?.insets?.top ?? 47) + 12;
-const FILTER_SHEET_TRAVEL = SCREEN_H - FILTER_SHEET_TOP;
-
-const SAMPLE_REVIEWS = [
-  {
-    id: 'sample-1',
-    author: 'Claire',
-    rating: 5,
-    comment:
-      'Très clair et patient. Ma fille a repris confiance en maths en quelques séances.',
-    createdAt: '2026-09-12',
-  },
-  {
-    id: 'sample-2',
-    author: 'Marc',
-    rating: 4,
-    comment:
-      'Bon suivi avant les examens. Les explications sont simples et le cours est bien préparé.',
-    createdAt: '2026-08-03',
-  },
-  {
-    id: 'sample-3',
-    author: 'Inès',
-    rating: 5,
-    comment: 'Ponctuel et à l’écoute. On a vu la différence sur le bulletin.',
-    createdAt: '2026-06-21',
-  },
-];
-
-function formatReviewDate(value) {
-  if (!value) return '';
-  try {
-    return new Date(value).toLocaleDateString('fr-FR', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
-  } catch {
-    return '';
-  }
-}
 
 function formatRate(rate) {
   const value = Number(rate);
@@ -115,10 +38,6 @@ function formatRate(rate) {
 
 function firstName(fullName) {
   return String(fullName || 'le tuteur').trim().split(/\s+/)[0] || 'le tuteur';
-}
-
-function defaultRequestMessage(tutorName) {
-  return `Bonjour ${firstName(tutorName)}, je souhaite réserver un cours pour…`;
 }
 
 function getInitials(name) {
@@ -133,14 +52,47 @@ function getInitials(name) {
 
 function getLessonsGiven(tutor) {
   const fromProfile = Number(tutor?.lessonsGiven ?? tutor?.coursesGiven);
-  if (Number.isFinite(fromProfile) && fromProfile > 0) return Math.round(fromProfile);
-  const reviews = Number(tutor?.reviewCount) || 0;
-  return reviews > 0 ? reviews * 6 : 0;
+  if (Number.isFinite(fromProfile) && fromProfile >= 0) return Math.round(fromProfile);
+  return 0;
+}
+
+function lessonsGivenLabel(count) {
+  const n = Math.max(0, Math.round(Number(count) || 0));
+  return n === 1 ? '1 cours donné' : `${n} cours donnés`;
+}
+
+function placeFacts(tutor) {
+  return [
+    { icon: 'location-outline', text: tutor?.city || 'Lieu à préciser' },
+    {
+      icon: 'people-outline',
+      text: courseFormatLabel(tutor?.teachingFormats) || 'Format à préciser',
+    },
+    { icon: 'school-outline', text: tutor?.studyYear || 'Parcours à préciser' },
+  ];
+}
+
+const PREVIEW_CHIPS = 3;
+const PREVIEW_BIO_WORDS = 24;
+
+function limitWords(text, max) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length <= max) return words.join(' ');
+  return `${words.slice(0, max).join(' ')}…`;
+}
+
+function previewChips(tutor) {
+  const subjects = (
+    tutor?.specialties?.length ? tutor.specialties : [tutor?.subject]
+  ).filter((item) => item && String(item).toLowerCase() !== 'matière');
+  return (subjects.length ? subjects : ['À préciser']).slice(0, PREVIEW_CHIPS);
 }
 
 export default function SwipeScreen() {
+  const isFocused = useIsFocused();
+  const { height: windowHeight } = useWindowDimensions();
+  const tightScreen = windowHeight < 700;
   const { userId } = useAuth();
-  const navigation = useNavigation();
   const {
     isFavorite,
     isToggling,
@@ -156,43 +108,8 @@ export default function SwipeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const filterSlide = useRef(new Animated.Value(FILTER_SHEET_TRAVEL)).current;
-  const closeFiltersRef = useRef(() => {});
-  const filterHandlePan = useRef(null);
-  if (!filterHandlePan.current) {
-    const springOpen = () => {
-      Animated.spring(filterSlide, {
-        toValue: 0,
-        useNativeDriver: true,
-        speed: 20,
-        bounciness: 0,
-      }).start();
-    };
-    filterHandlePan.current = PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gesture) =>
-        gesture.dy > 4 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-      onPanResponderGrant: () => {
-        filterSlide.stopAnimation();
-      },
-      onPanResponderMove: (_, gesture) => {
-        filterSlide.setValue(Math.max(0, gesture.dy));
-      },
-      onPanResponderRelease: (_, gesture) => {
-        const dy = Math.max(0, gesture.dy);
-        if (dy > 80 || gesture.vy > 0.8) closeFiltersRef.current();
-        else springOpen();
-      },
-      onPanResponderTerminate: springOpen,
-    });
-  }
   const [detailOpen, setDetailOpen] = useState(false);
-  const [detailReviews, setDetailReviews] = useState([]);
-  const [detailReviewsLoading, setDetailReviewsLoading] = useState(false);
-  const [messageModalOpen, setMessageModalOpen] = useState(false);
-  const [messageDraft, setMessageDraft] = useState('');
-  const [sendingRequest, setSendingRequest] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
   const [pageWidth, setPageWidth] = useState(SCREEN_W - 40);
   const toastTimerRef = useRef(null);
@@ -227,15 +144,21 @@ export default function SwipeScreen() {
       let available = profiles;
 
       if (userId) {
-        const matches = await fetchMatches(userId, {
-          statuses: [
-            MATCH_STATUS.PENDING,
-            MATCH_STATUS.ACCEPTED,
-            MATCH_STATUS.DECLINED,
-          ],
-        });
+        const [matches, favoriteIds] = await Promise.all([
+          fetchMatches(userId, {
+            statuses: [
+              MATCH_STATUS.PENDING,
+              MATCH_STATUS.ACCEPTED,
+              MATCH_STATUS.DECLINED,
+            ],
+          }),
+          fetchFavoriteTutorIds(userId),
+        ]);
         const matchedIds = new Set(matches.map((match) => match.tutorId));
-        available = profiles.filter((tutor) => !matchedIds.has(tutor.id));
+        const savedIds = new Set(favoriteIds);
+        available = profiles.filter(
+          (tutor) => savedIds.has(tutor.id) || !matchedIds.has(tutor.id)
+        );
       }
 
       setAllTutors(available);
@@ -259,6 +182,13 @@ export default function SwipeScreen() {
   );
 
   const hasActiveFilters = filters.hasActiveFilters;
+  const placeName = String(filters.searchOrigin?.label || filters.cityQuery || '')
+    .replace(/\s+\d{4}\b/, '')
+    .trim();
+  const searchLabel =
+    filters.activeFilter && placeName
+      ? `${filters.activeFilter} à ${placeName}`
+      : filters.activeFilter || placeName || '';
 
   const tutors = useMemo(
     () => allTutors.filter(filters.matchesTutor),
@@ -308,61 +238,7 @@ export default function SwipeScreen() {
     setIndex(next);
   }
 
-  function openFilters() {
-    filterSlide.setValue(FILTER_SHEET_TRAVEL);
-    setFiltersOpen(true);
-  }
-
-  useEffect(() => {
-    if (!filtersOpen) return undefined;
-    const animation = Animated.timing(filterSlide, {
-      toValue: 0,
-      duration: 280,
-      useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [filtersOpen, filterSlide]);
-
-  function closeFilters() {
-    Animated.timing(filterSlide, {
-      toValue: FILTER_SHEET_TRAVEL,
-      duration: 220,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setFiltersOpen(false);
-    });
-  }
-
-  closeFiltersRef.current = closeFilters;
-
   const tutor = tutors[index];
-  const detailSubjects = (
-    tutor?.specialties?.length ? tutor.specialties : [tutor?.subject]
-  ).filter(Boolean);
-  const detailLessons = tutor ? getLessonsGiven(tutor) : 0;
-  const detailFormats = TEACHING_FORMATS.filter((format) =>
-    (tutor?.teachingFormats ?? []).includes(format)
-  );
-
-  useEffect(() => {
-    if (!detailOpen || !tutor?.id) return undefined;
-    let cancelled = false;
-    setDetailReviewsLoading(true);
-    fetchTutorReviews(tutor.id)
-      .then((rows) => {
-        if (!cancelled) setDetailReviews(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setDetailReviews([]);
-      })
-      .finally(() => {
-        if (!cancelled) setDetailReviewsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [detailOpen, tutor?.id]);
   const isDone = !loading && !error && tutors.length === 0;
 
   async function onToggleFavorite(target = tutor) {
@@ -385,49 +261,6 @@ export default function SwipeScreen() {
     setDetailOpen(true);
   }
 
-  function openMessageModal() {
-    if (!tutor || sendingRequest) return;
-    setActionError(null);
-    setMessageDraft(defaultRequestMessage(tutor.name));
-    setMessageModalOpen(true);
-  }
-
-  async function onSendRequest() {
-    if (!tutor || sendingRequest) return;
-
-    const content = messageDraft.trim();
-    if (!content) {
-      setActionError('Écris un message avant d’envoyer.');
-      return;
-    }
-    if (!userId) {
-      setActionError('Tu dois être connecté pour envoyer une demande.');
-      return;
-    }
-
-    setSendingRequest(true);
-    setActionError(null);
-    try {
-      await startTutorConversation({
-        parentId: userId,
-        tutorId: tutor.id,
-        content,
-        senderId: userId,
-      });
-      setLiked((prev) => [...prev, tutor.name]);
-      setMessageModalOpen(false);
-      setDetailOpen(false);
-      scrollToTutor(index + 1);
-      showToast(
-        'Message envoyé ! Retrouve la discussion dans l’onglet Messages.'
-      );
-    } catch (err) {
-      setActionError(err?.message ?? 'Impossible d’envoyer la demande.');
-    } finally {
-      setSendingRequest(false);
-    }
-  }
-
   const reset = () => {
     indexRef.current = 0;
     setIndex(0);
@@ -438,8 +271,7 @@ export default function SwipeScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
-
+      {isFocused ? <StatusBar style="light" /> : null}
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.container}>
           {toastMessage ? (
@@ -449,352 +281,45 @@ export default function SwipeScreen() {
             </View>
           ) : null}
 
-          <View style={styles.topBar}>
-            <Text style={styles.brand} pointerEvents="none">
-              Clutch
-            </Text>
-            <View style={[styles.topBarSide, styles.topBarSideLeft]}>
-              <Pressable
-                style={[
-                  styles.headerIconButton,
-                  (filtersOpen || hasActiveFilters) &&
-                    styles.headerIconButtonActive,
-                ]}
-                onPress={openFilters}
-                accessibilityLabel="Filtres de recherche"
-                hitSlop={8}
+          <Text style={styles.brandMark}>Clutch</Text>
+          <View style={styles.searchRow}>
+            <Pressable
+              style={styles.searchField}
+              onPress={() => setSearchOpen(true)}
+              accessibilityLabel="Rechercher une matière ou un lieu"
+            >
+              <Ionicons name="search" size={18} color="#8E8E93" />
+              <Text
+                style={searchLabel ? styles.searchValue : styles.searchPlaceholder}
+                numberOfLines={1}
               >
-                <Ionicons
-                  name="options-outline"
-                  size={22}
-                  color={colors.white}
-                />
-              </Pressable>
-            </View>
-            <View style={[styles.topBarSide, styles.topBarSideRight]}>
-              <Pressable
-                style={styles.headerIconButton}
-                onPress={() => navigation.navigate('Settings')}
-                accessibilityLabel="Réglages"
-                hitSlop={8}
-              >
-                <Ionicons
-                  name="settings-outline"
-                  size={22}
-                  color={colors.white}
-                />
-              </Pressable>
-            </View>
+                {searchLabel || 'Rechercher un tuteur...'}
+              </Text>
+            </Pressable>
           </View>
+          <TutorRefineBar filters={filters} />
 
-          <Modal
+          <TutorSearchSheet
+            visible={searchOpen}
+            onClose={() => setSearchOpen(false)}
+            filters={filters}
+            tutors={allTutors}
+          />
+
+          <TutorProfileDetail
+            tutor={tutor}
             visible={detailOpen}
-            animationType="slide"
-            statusBarTranslucent={false}
-            onRequestClose={() => {
-              if (sendingRequest) return;
-              if (messageModalOpen) {
-                setMessageModalOpen(false);
-                return;
-              }
-              setDetailOpen(false);
+            onClose={() => setDetailOpen(false)}
+            onConversationStarted={() => {
+              if (!tutor) return;
+              setLiked((prev) => [...prev, tutor.name]);
+              scrollToTutor(index + 1);
+              showToast(
+                'Message envoyé ! Retrouve la discussion dans l’onglet Messages.'
+              );
             }}
-          >
-            <SafeAreaProvider initialMetrics={initialWindowMetrics} style={styles.detailProvider}>
-            <View style={styles.root}>
-              <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
-              <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-                <View style={styles.detailHeader}>
-                  <Pressable
-                    style={styles.headerIconButton}
-                    onPress={() => setDetailOpen(false)}
-                    disabled={sendingRequest}
-                    accessibilityLabel="Retour"
-                    hitSlop={8}
-                  >
-                    <Ionicons
-                      name="chevron-back"
-                      size={22}
-                      color={colors.white}
-                    />
-                  </Pressable>
-                  <Text style={styles.detailTitle}>Profil</Text>
-                  <View style={styles.detailHeaderSpacer} />
-                </View>
+          />
 
-                {tutor ? (
-                  <ScrollView
-                    style={styles.detailScroll}
-                    contentContainerStyle={styles.detailContent}
-                    showsVerticalScrollIndicator={false}
-                  >
-                    <View style={styles.detailHeroCard}>
-                      <Pressable
-                        style={styles.detailHeroHeart}
-                        onPress={() => onToggleFavorite(tutor)}
-                        disabled={isToggling(tutor.id)}
-                        accessibilityLabel={
-                          isFavorite(tutor.id)
-                            ? 'Retirer des favoris'
-                            : 'Ajouter aux favoris'
-                        }
-                        hitSlop={8}
-                      >
-                        {isToggling(tutor.id) ? (
-                          <ActivityIndicator size="small" color={colors.danger} />
-                        ) : (
-                          <Ionicons
-                            name={
-                              isFavorite(tutor.id) ? 'heart' : 'heart-outline'
-                            }
-                            size={22}
-                            color={
-                              isFavorite(tutor.id) ? colors.danger : colors.muted
-                            }
-                          />
-                        )}
-                      </Pressable>
-                      <View style={styles.detailHeroAvatar}>
-                        {tutor.avatarUrl ? (
-                          <Image
-                            source={{ uri: tutor.avatarUrl }}
-                            style={styles.detailHeroImage}
-                          />
-                        ) : (
-                          <Text style={styles.detailHeroInitials}>
-                            {getInitials(tutor.name)}
-                          </Text>
-                        )}
-                      </View>
-                      <Text style={styles.detailHeroName}>
-                        {firstName(tutor.name)}
-                      </Text>
-                      <Text style={styles.detailHeroHeadline}>
-                        {detailSubjects.length
-                          ? `Cours de ${detailSubjects.join(', ')}`
-                          : 'Cours à préciser'}
-                      </Text>
-                      <Text style={styles.detailHeroCity}>
-                        {tutor.city
-                          ? `${tutor.city}${
-                              tutor.postalCode ? ` · ${tutor.postalCode}` : ''
-                            }`
-                          : 'Ville à préciser'}
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailStats}>
-                      {[
-                        [
-                          'Note',
-                          (tutor.rating || 0) > 0
-                            ? tutor.rating.toFixed(1)
-                            : '—',
-                        ],
-                        ['Avis', String(tutor.reviewCount || detailReviews.length || 0)],
-                        ['Cours', String(detailLessons)],
-                      ].map(([label, value]) => (
-                        <View key={label} style={styles.detailStat}>
-                          <Text style={styles.detailStatValue}>{value}</Text>
-                          <Text style={styles.detailStatLabel}>{label}</Text>
-                        </View>
-                      ))}
-                    </View>
-
-                    <View style={styles.detailBlockCard}>
-                      <Text style={styles.detailBlockTitle}>Tarif</Text>
-                      <Text style={styles.detailPriceHero}>
-                        {formatRate(tutor.hourlyRate)} €
-                        <Text style={styles.detailPriceUnit}> / heure</Text>
-                      </Text>
-                      <Text style={styles.detailBlockText}>
-                        Le premier échange se fait par message, sans réservation
-                        immédiate.
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailBlockCard}>
-                      <Text style={styles.detailBlockTitle}>À propos</Text>
-                      <Text style={tutor.bio ? styles.detailBlockText : styles.bioMuted}>
-                        {tutor.bio ||
-                          `${firstName(tutor.name)} n’a pas encore rédigé sa présentation.`}
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailBlockCard}>
-                      <Text style={styles.detailBlockTitle}>Matières</Text>
-                      <View style={styles.detailChipWrap}>
-                        {(detailSubjects.length
-                          ? detailSubjects
-                          : ['À préciser']
-                        ).map((subject) => (
-                          <View key={`${tutor.id}-${subject}`} style={styles.detailChip}>
-                            <Text style={styles.detailChipLabel}>{subject}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-
-                    <View style={styles.detailBlockCard}>
-                      <Text style={styles.detailBlockTitle}>Parcours</Text>
-                      <Text style={styles.detailBlockText}>
-                        {`${firstPersonLevel(tutor.studyYear)} ${
-                          detailSubjects.length
-                            ? `J’accompagne des élèves en ${joinSubjects(detailSubjects)}.`
-                            : 'Les matières que je propose ne sont pas encore précisées.'
-                        } Je reprends le chapitre en cours, je montre comment attaquer un exercice, puis on s’entraîne jusqu’à ce que la méthode soit claire.`}
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailBlockCard}>
-                      <Text style={styles.detailBlockTitle}>
-                        Où et comment se passe le cours
-                      </Text>
-                      <Text style={styles.detailBlockText}>
-                        {tutor.city
-                          ? `J’habite à ${tutor.city}.`
-                          : 'Je n’ai pas encore indiqué ma ville.'}
-                      </Text>
-                      {detailFormats.length ? (
-                        detailFormats.map((format) => (
-                          <View key={format} style={styles.detailFormatCard}>
-                            <Text style={styles.detailFormatTitle}>{format}</Text>
-                            <Text style={styles.detailBlockText}>
-                              {FORMAT_DETAILS[format]}
-                            </Text>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.bioMuted}>
-                          Je n’ai pas encore précisé comment se passe le cours.
-                        </Text>
-                      )}
-                    </View>
-
-                    <View style={styles.detailBlockCard}>
-                      <Text style={styles.detailBlockTitle}>Avis</Text>
-                      {detailReviewsLoading ? (
-                        <ActivityIndicator color={colors.mintDeep} />
-                      ) : (
-                        <>
-                          {detailReviews.length === 0 ? (
-                            <Text style={styles.detailReviewHint}>
-                              Exemples, pour voir le rendu.
-                            </Text>
-                          ) : null}
-                          {(detailReviews.length ? detailReviews : SAMPLE_REVIEWS).map(
-                            (review, reviewIndex, list) => (
-                              <View
-                                key={review.id}
-                                style={[
-                                  styles.detailReview,
-                                  reviewIndex === list.length - 1 &&
-                                    styles.detailReviewLast,
-                                ]}
-                              >
-                                <View style={styles.detailReviewHead}>
-                                  <Text style={styles.detailReviewAuthor}>
-                                    {review.author || 'Parent'}
-                                  </Text>
-                                  <Text style={styles.detailReviewDate}>
-                                    {formatReviewDate(review.createdAt)}
-                                  </Text>
-                                </View>
-                                <Text style={styles.detailReviewRating}>
-                                  {'★'.repeat(review.rating)}
-                                  {'☆'.repeat(Math.max(0, 5 - review.rating))}
-                                </Text>
-                                <Text style={styles.detailBlockText}>
-                                  {review.comment || 'Avis sans commentaire.'}
-                                </Text>
-                              </View>
-                            )
-                          )}
-                        </>
-                      )}
-                    </View>
-                  </ScrollView>
-                ) : null}
-              </SafeAreaView>
-              <View style={styles.detailFooter}>
-                <Pressable
-                  style={[
-                    styles.detailMessageButton,
-                    sendingRequest && styles.disabled,
-                  ]}
-                  onPress={openMessageModal}
-                  disabled={!tutor || sendingRequest}
-                  accessibilityLabel="Envoyer un message"
-                >
-                  {sendingRequest ? (
-                    <ActivityIndicator color={colors.white} />
-                  ) : (
-                    <>
-                      <Ionicons
-                        name="chatbubble-ellipses"
-                        size={18}
-                        color={colors.white}
-                      />
-                      <Text style={styles.messageButtonLabel}>
-                        Envoyer un message
-                      </Text>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-              {messageModalOpen ? (
-                <View style={styles.detailMessageOverlay}>
-                  <Pressable
-                    style={styles.modalBackdrop}
-                    onPress={() => {
-                      if (!sendingRequest) setMessageModalOpen(false);
-                    }}
-                  />
-                  <View style={styles.modalCard}>
-                    <Text style={styles.modalTitle}>Proposer un cours</Text>
-                    <Text style={styles.modalSectionLabel}>
-                      Message à {tutor?.name ?? 'ton tuteur'}
-                    </Text>
-                    <TextInput
-                      style={styles.messageInput}
-                      value={messageDraft}
-                      onChangeText={setMessageDraft}
-                      multiline
-                      textAlignVertical="top"
-                      placeholder="Écris ta demande…"
-                      placeholderTextColor={colors.mutedSoft}
-                      editable={!sendingRequest}
-                    />
-                    <Pressable
-                      style={[
-                        styles.modalPrimary,
-                        (!messageDraft.trim() || sendingRequest) &&
-                          styles.disabled,
-                      ]}
-                      onPress={onSendRequest}
-                      disabled={!messageDraft.trim() || sendingRequest}
-                    >
-                      {sendingRequest ? (
-                        <ActivityIndicator color={colors.white} />
-                      ) : (
-                        <Text style={styles.modalPrimaryLabel}>
-                          Envoyer la demande
-                        </Text>
-                      )}
-                    </Pressable>
-                    <Pressable
-                      style={styles.modalCancel}
-                      onPress={() => setMessageModalOpen(false)}
-                      disabled={sendingRequest}
-                    >
-                      <Text style={styles.modalCancelLabel}>Annuler</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ) : null}
-            </View>
-            </SafeAreaProvider>
-          </Modal>
 
           <View style={styles.cardStage} onLayout={onStageLayout}>
             {loading ? (
@@ -818,7 +343,7 @@ export default function SwipeScreen() {
                 <Text style={styles.emptyText}>
                   {tutors.length === 0
                     ? hasActiveFilters
-                      ? 'Aucun tuteur ne correspond à tes filtres. Élargis la matière, l’adresse, le prix ou le niveau.'
+                      ? 'Aucun tuteur ne correspond à ta recherche. Élargis la matière, le lieu, le prix ou le niveau.'
                       : 'Tous les tuteurs sont déjà matchés, ou aucun profil n’est disponible.'
                     : `Demandes : ${liked.length || 0}\nPassés : ${passed.length || 0}\n\nRetrouve tes conversations dans Messages.`}
                 </Text>
@@ -858,52 +383,56 @@ export default function SwipeScreen() {
                 scrollEventThrottle={16}
                 onScroll={onTutorScroll}
               >
-                {tutors.map((item) => {
+                {tutors.map((item, position) => {
                   const itemFavorite = isFavorite(item.id);
-                  const itemLessons = getLessonsGiven(item);
-                  const subjects = (
-                    item.specialties?.length ? item.specialties : [item.subject]
-                  ).filter(Boolean);
-                  const cityLabel = item.city
-                    ? `${item.city}${item.postalCode ? ` · ${item.postalCode}` : ''}`
-                    : 'À préciser';
-                  const ratingLabel =
-                    (item.rating || 0) > 0 ? item.rating.toFixed(1) : '—';
-                  const lessonsLabel =
-                    itemLessons > 0
-                      ? `${itemLessons} cours donnés avec succès`
-                      : 'Pas encore de cours';
-                  const travels = tutorCanTravel(item.teachingFormats);
+                  const chips = previewChips(item);
+                  const facts = placeFacts(item);
+                  const hasRating = (item.rating || 0) > 0;
+                  const ratingLabel = hasRating
+                    ? `${item.rating.toFixed(1)} (${item.reviewCount || 0} avis)`
+                    : 'Pas encore d’avis';
                   return (
                     <View
                       key={item.id}
                       style={[styles.page, { width: pageWidth }]}
                     >
-                      <View style={styles.recapClip}>
-                      <View style={[styles.card, styles.recapCard]}>
-                        <View style={styles.recapIdentity}>
-                          <View style={styles.recapAvatar}>
-                            {item.avatarUrl ? (
-                              <Image
-                                source={{ uri: item.avatarUrl }}
-                                style={styles.recapAvatarImage}
-                              />
-                            ) : (
-                              <Text style={styles.recapAvatarText}>
-                                {getInitials(item.name)}
+                      <View style={styles.previewCard}>
+                        <View style={[styles.previewTop, styles.previewFixed]}>
+                          <View style={[styles.previewAvatarWrap, tightScreen && styles.previewAvatarWrapTight]}>
+                            <View style={[styles.previewAvatar, tightScreen && styles.previewAvatarTight]}>
+                              {item.avatarUrl ? (
+                                <Image
+                                  source={{ uri: item.avatarUrl }}
+                                  style={styles.previewAvatarImage}
+                                />
+                              ) : (
+                                <Text style={styles.previewAvatarText}>
+                                  {getInitials(item.name)}
+                                </Text>
+                              )}
+                            </View>
+                            <View style={styles.verifiedBadge}>
+                              <Text style={styles.verifiedBadgeText} numberOfLines={1}>
+                                {lessonsGivenLabel(getLessonsGiven(item))}
                               </Text>
-                            )}
+                            </View>
                           </View>
-                          <View style={styles.recapIdentityText}>
-                            <Text style={styles.recapName} numberOfLines={1}>
+                          <View style={styles.previewIdentity}>
+                            <Text style={styles.previewName} numberOfLines={1}>
                               {firstName(item.name)}
                             </Text>
-                            <Text style={styles.recapRating} numberOfLines={1}>
-                              ★ {ratingLabel}
+                            <Text style={styles.previewRating} numberOfLines={1}>
+                              {hasRating ? (
+                                <Text style={styles.previewStar}>★ </Text>
+                              ) : null}
+                              {ratingLabel}
+                            </Text>
+                            <Text style={styles.previewPrice}>
+                              {formatRate(item.hourlyRate)} €/h
                             </Text>
                           </View>
                           <Pressable
-                            style={styles.recapHeart}
+                            style={styles.previewHeart}
                             onPress={() => onToggleFavorite(item)}
                             disabled={isToggling(item.id)}
                             accessibilityLabel={
@@ -914,77 +443,71 @@ export default function SwipeScreen() {
                             hitSlop={8}
                           >
                             {isToggling(item.id) ? (
-                              <ActivityIndicator
-                                size="small"
-                                color={colors.danger}
-                              />
+                              <ActivityIndicator size="small" color="#3DDC97" />
                             ) : (
                               <Ionicons
                                 name={itemFavorite ? 'heart' : 'heart-outline'}
-                                size={20}
-                                color={
-                                  itemFavorite ? colors.danger : colors.muted
-                                }
+                                size={22}
+                                color={itemFavorite ? '#3DDC97' : '#C7C7CC'}
                               />
                             )}
                           </Pressable>
                         </View>
 
-                        <Text style={styles.recapLessons} numberOfLines={2}>
-                          {lessonsLabel}
+                        <View style={styles.previewFixed}>
+                          <View style={styles.previewDivider} />
+                          <Text style={styles.previewSection}>Spécialités</Text>
+                          <View style={[styles.previewChips, tightScreen && styles.previewChipsTight]}>
+                            {chips.map((chip, chipIndex) => (
+                              <View
+                                key={`${item.id}-${chip}-${chipIndex}`}
+                                style={styles.previewChip}
+                              >
+                                <Text style={styles.previewChipLabel}>{chip}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+
+                        <Text
+                          style={[
+                            item.bio ? styles.previewBio : styles.bioMuted,
+                            styles.previewBioSpace,
+                          ]}
+                          numberOfLines={3}
+                        >
+                          {item.bio
+                            ? limitWords(item.bio, PREVIEW_BIO_WORDS)
+                            : `${firstName(item.name)} n’a pas encore rédigé sa présentation.`}
                         </Text>
 
-                        <View style={styles.recapSplit}>
-                          <View style={styles.recapSplitMain}>
-                            <Text style={styles.recapLabelFloat}>Matières</Text>
-                            <View style={styles.recapZoneBody}>
-                              <View style={styles.recapSubjectList}>
-                                {(subjects.length
-                                  ? subjects
-                                  : ['À préciser']
-                                ).map((subject, subjectIndex) => (
-                                  <Text
-                                    key={`${item.id}-${subject}-${subjectIndex}`}
-                                    style={styles.recapValue}
-                                    numberOfLines={1}
-                                  >
-                                    {subject}
-                                  </Text>
-                                ))}
-                              </View>
-                            </View>
-                          </View>
-                          <View style={styles.recapPricePane}>
-                            <Text style={[styles.recapLabelFloat, styles.recapPriceLabel]}>
-                              Tarif
-                            </Text>
-                            <View style={styles.recapPriceBody}>
-                              <Text style={styles.recapPrice} numberOfLines={2}>
-                                {formatRate(item.hourlyRate)} €/h
+                        <View style={styles.previewFixed}>
+                          {facts.map((fact, factIndex) => (
+                            <View
+                              key={fact.icon}
+                              style={[
+                                styles.previewFact,
+                                factIndex === facts.length - 1 && styles.previewFactLast,
+                              ]}
+                            >
+                              <Ionicons name={fact.icon} size={16} color="#A1A1A6" />
+                              <Text style={styles.previewFactText} numberOfLines={1}>
+                                {fact.text}
                               </Text>
                             </View>
-                          </View>
+                          ))}
                         </View>
-
-                        <View style={styles.recapLevelRow}>
-                          <Text style={styles.recapLabelFloat}>Niveau</Text>
-                          <View style={styles.recapPriceBody}>
-                            <Text style={styles.recapValue} numberOfLines={1}>
-                              {item.studyYear || 'À préciser'}
+                        <View style={styles.previewFooter}>
+                          <Pressable
+                            style={styles.discoverButton}
+                            onPress={openDetails}
+                            accessibilityLabel="Voir le profil"
+                          >
+                            <Text style={styles.discoverButtonLabel}>
+                              Voir le profil
                             </Text>
-                          </View>
+                          </Pressable>
                         </View>
-
-                        <View style={styles.recapRow}>
-                          <Text style={styles.recapLabel}>Ville</Text>
-                          <Text style={styles.recapValue} numberOfLines={2}>
-                            {cityLabel}
-                          </Text>
-                          <Text style={styles.recapTravel} numberOfLines={1}>
-                            {travels ? 'Peut se déplacer' : 'Ne se déplace pas'}
-                          </Text>
-                        </View>
-                      </View>
                       </View>
                     </View>
                   );
@@ -994,34 +517,20 @@ export default function SwipeScreen() {
           </View>
 
           {!loading && !error && tutors.length > 0 ? (
-            <View style={styles.pagerIndicator}>
-              {tutors.length > 12 ? (
-                <View style={styles.pagerTrack}>
-                  <View
-                    style={[
-                      styles.pagerThumb,
-                      {
-                        width: `${100 / tutors.length}%`,
-                        left: `${(index / tutors.length) * 100}%`,
-                      },
-                    ]}
-                  />
-                </View>
-              ) : (
-                <View style={styles.dotRow}>
-                  {tutors.map((item, position) => (
-                    <View
-                      key={item.id}
-                      style={[
-                        styles.dot,
-                        position === index && styles.dotActive,
-                      ]}
-                    />
-                  ))}
-                </View>
-              )}
-              <Text style={styles.pagerCount}>
-                {Math.min(index + 1, tutors.length)} / {tutors.length}
+            <View style={styles.previewProgressRow}>
+              <View style={styles.previewTrack}>
+                <View
+                  style={[
+                    styles.previewFill,
+                    {
+                      width: `${100 / tutors.length}%`,
+                      left: `${(index / tutors.length) * 100}%`,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.previewCount}>
+                {Math.min(index + 1, tutors.length)} sur {tutors.length}
               </Text>
             </View>
           ) : null}
@@ -1029,78 +538,9 @@ export default function SwipeScreen() {
           {actionError ? (
             <Text style={styles.actionError}>{actionError}</Text>
           ) : null}
-
-          {!loading && !error && !isDone ? (
-            <Pressable
-              style={styles.detailsButton}
-              onPress={openDetails}
-              accessibilityLabel="Voir plus de détails"
-            >
-              <Text style={styles.detailsButtonLabel}>Voir plus de détails</Text>
-            </Pressable>
-          ) : null}
         </View>
       </SafeAreaView>
 
-      {filtersOpen ? (
-        <View style={styles.filterLayer}>
-          <Pressable style={styles.filterBackdrop} onPress={closeFilters} />
-          <Animated.View
-            style={[
-              styles.filterDrawer,
-              { transform: [{ translateY: filterSlide }] },
-            ]}
-          >
-            <SafeAreaView style={styles.filterDrawerSafe} edges={['bottom']}>
-              <View
-                style={styles.filterHandleWrap}
-                {...filterHandlePan.current.panHandlers}
-              >
-                <View style={styles.filterHandle} />
-              </View>
-              <View style={styles.filterDrawerHeader}>
-                <Text pointerEvents="none" style={styles.filterDrawerTitle}>
-                  Filtres
-                </Text>
-                <Pressable
-                  style={styles.filterClose}
-                  onPress={closeFilters}
-                  hitSlop={8}
-                  accessibilityLabel="Fermer les filtres"
-                >
-                  <Ionicons name="close" size={22} color={colors.ink} />
-                </Pressable>
-                <Pressable
-                  style={styles.filterClearButton}
-                  onPress={filters.clearAllFilters}
-                  hitSlop={8}
-                >
-                  <Text style={styles.filterClear}>Effacer</Text>
-                </Pressable>
-              </View>
-
-              <ScrollView
-                style={styles.filterDrawerScroll}
-                contentContainerStyle={styles.filterDrawerContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <TutorFilterFields filters={filters} />
-              </ScrollView>
-
-              <View style={styles.filterFooter}>
-                <Pressable style={styles.filterApply} onPress={closeFilters}>
-                  <Text style={styles.filterApplyLabel}>
-                    {tutors.length === 1
-                      ? 'Voir 1 prof'
-                      : `Voir ${tutors.length} profs`}
-                  </Text>
-                </Pressable>
-              </View>
-            </SafeAreaView>
-          </Animated.View>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -1108,263 +548,7 @@ export default function SwipeScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.page,
-  },
-  filterLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 40,
-  },
-  filterBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(16, 38, 28, 0.45)',
-  },
-  filterDrawer: {
-    position: 'absolute',
-    top: FILTER_SHEET_TOP,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.white,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    overflow: 'hidden',
-    shadowColor: '#10261C',
-    shadowOpacity: 0.2,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: -8 },
-    elevation: 16,
-  },
-  filterDrawerSafe: {
-    flex: 1,
-    backgroundColor: colors.white,
-  },
-  filterHandleWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 10,
-    paddingBottom: 8,
-  },
-  filterHandle: {
-    width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#D5DED9',
-  },
-  filterDrawerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  filterClose: {
-    zIndex: 2,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.page,
-  },
-  filterDrawerTitle: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    zIndex: 0,
-    textAlign: 'center',
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.ink,
-  },
-  filterClearButton: {
-    zIndex: 2,
-  },
-  filterClear: {
-    minWidth: 36,
-    textAlign: 'right',
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.mintDeep,
-  },
-  filterDrawerScroll: {
-    flex: 1,
-  },
-  filterDrawerContent: {
-    paddingBottom: 8,
-  },
-  filterSection: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  filterSectionHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  filterSectionCopy: {
-    flex: 1,
-    gap: 3,
-  },
-  filterSectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  filterSectionSummary: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.mutedSoft,
-  },
-  filterSectionSummaryActive: {
-    color: colors.mintDeep,
-  },
-  filterSectionBody: {
-    paddingHorizontal: 10,
-    paddingBottom: 8,
-  },
-  filterHint: {
-    marginTop: 2,
-    marginBottom: 6,
-    marginHorizontal: 8,
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.muted,
-  },
-  filterSlider: {
-    marginHorizontal: 8,
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  filterSliderCaption: {
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.mintDeep,
-    marginBottom: 8,
-  },
-  filterSliderHit: {
-    height: 36,
-    justifyContent: 'center',
-  },
-  filterSliderTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#E2EAE5',
-  },
-  filterSliderFill: {
-    position: 'absolute',
-    top: 15,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.mintDeep,
-  },
-  filterSliderThumb: {
-    position: 'absolute',
-    top: 5,
-    width: SLIDER_THUMB,
-    height: SLIDER_THUMB,
-    borderRadius: SLIDER_THUMB / 2,
-    backgroundColor: colors.white,
-    borderWidth: 3,
-    borderColor: colors.mintDeep,
-    ...shadows.soft,
-  },
-  filterSliderEnds: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 6,
-  },
-  filterSliderEnd: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.mutedSoft,
-  },
-  filterSliderEndRight: {
-    textAlign: 'right',
-  },
-  filterChoice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 11,
-    borderRadius: 12,
-  },
-  filterChoiceLabel: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.ink,
-  },
-  filterChoiceLabelActive: {
-    fontWeight: '700',
-    color: colors.mintDeep,
-  },
-  drawerInput: {
-    marginHorizontal: 8,
-    marginBottom: 8,
-    backgroundColor: colors.page,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: colors.ink,
-  },
-  suggestList: {
-    marginHorizontal: 8,
-    marginTop: -2,
-    marginBottom: 8,
-    borderRadius: 12,
-    backgroundColor: colors.page,
-    overflow: 'hidden',
-  },
-  suggestRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  suggestLabel: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.ink,
-  },
-  originHint: {
-    marginHorizontal: 8,
-    marginBottom: 8,
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.mintDeep,
-  },
-  filterFooter: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.white,
-  },
-  filterApply: {
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.mintDeep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterApplyLabel: {
-    color: colors.white,
-    fontSize: 16,
-    fontWeight: '800',
+    backgroundColor: '#111111',
   },
   mintBand: {
     position: 'absolute',
@@ -1380,8 +564,258 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 4,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  brandMark: {
+    textAlign: 'center',
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#3DDC97',
+    marginBottom: 14,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  searchField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 48,
+    paddingHorizontal: 12,
+    backgroundColor: '#1C1C1E',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+  },
+  searchValue: {
+    flex: 1,
+    fontSize: 15,
+    color: colors.white,
+  },
+  searchPlaceholder: {
+    flex: 1,
+    fontSize: 15,
+    color: '#8E8E93',
+  },
+  previewCard: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: '#1A1A1C',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    borderRadius: 28,
+    paddingHorizontal: 18,
+    paddingTop: 18,
     paddingBottom: 16,
+    overflow: 'hidden',
+    ...shadows.card,
+  },
+  previewFixed: {
+    flexShrink: 0,
+  },
+  previewTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  previewAvatarWrapTight: {
+    width: 84,
+  },
+  previewAvatarTight: {
+    width: 84,
+    height: 84,
+  },
+  previewAvatarWrap: {
+    width: 108,
+    paddingBottom: 12,
+  },
+  previewAvatar: {
+    width: 108,
+    height: 108,
+    borderRadius: 22,
+    backgroundColor: colors.mintSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  previewAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  previewAvatarText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: colors.mintDeep,
+  },
+  verifiedBadge: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    backgroundColor: colors.mint,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: '#1A1A1C',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  verifiedBadgeText: {
+    color: colors.white,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  previewIdentity: {
+    flex: 1,
+    minWidth: 0,
+    paddingTop: 4,
+    paddingRight: 28,
+  },
+  previewName: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  previewRating: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#E8E8E8',
+  },
+  previewStar: {
+    color: colors.star,
+  },
+  previewPrice: {
+    marginTop: 6,
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  previewHeart: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#2C2C2E',
+    marginBottom: 14,
+  },
+  previewSection: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.white,
+    marginBottom: 10,
+  },
+  previewChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignContent: 'flex-start',
+    gap: 8,
+    maxHeight: 76,
+    marginBottom: 14,
+    overflow: 'hidden',
+  },
+  previewChipsTight: {
+    maxHeight: 40,
+  },
+  previewChip: {
+    maxWidth: '100%',
+    backgroundColor: '#2C2C2E',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  previewChipOn: {
+    backgroundColor: '#1E3A2F',
+  },
+  previewChipLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#E8E8E8',
+  },
+  previewChipLabelOn: {
+    color: '#3DDC97',
+  },
+  previewBio: {
+    flexShrink: 1,
+    minHeight: 0,
+    fontSize: 15,
+    lineHeight: 22,
+    maxHeight: 66,
+    color: '#D4D4D4',
+  },
+  previewBioSpace: {
+    flexShrink: 1,
+    minHeight: 0,
+    marginBottom: 14,
+    maxHeight: 66,
+    overflow: 'hidden',
+  },
+  previewFact: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 8,
+  },
+  previewFactLast: {
+    marginBottom: 0,
+  },
+  previewFactText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: '#E8E8E8',
+  },
+  previewFooter: {
+    flexShrink: 0,
+    marginTop: 'auto',
+    paddingTop: 16,
+  },
+  previewProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  previewTrack: {
+    flex: 1,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: '#2C2C2E',
+    overflow: 'hidden',
+  },
+  previewFill: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    borderRadius: 999,
+    backgroundColor: '#3DDC97',
+  },
+  previewCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#A1A1A6',
+  },
+  discoverButton: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: '#1B6B45',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  discoverButtonLabel: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '800',
   },
   toast: {
     position: 'absolute',
@@ -1546,11 +980,12 @@ const styles = StyleSheet.create({
   cardStage: {
     flex: 1,
     minHeight: 0,
-    paddingTop: 12,
+    paddingTop: 2,
     backgroundColor: 'transparent',
   },
   pager: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: 'transparent',
   },
   page: {
@@ -1560,7 +995,7 @@ const styles = StyleSheet.create({
   card: {
     flex: 1,
     minHeight: 0,
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.card,
     marginTop: 0,
     paddingTop: 16,
@@ -1843,9 +1278,13 @@ const styles = StyleSheet.create({
     color: '#3D4F45',
   },
   bioMuted: {
+    flexShrink: 1,
+    minHeight: 0,
     fontSize: 14,
+    lineHeight: 22,
+    maxHeight: 66,
     fontStyle: 'italic',
-    color: colors.mutedSoft,
+    color: '#A1A1A6',
   },
   pagerIndicator: {
     flexDirection: 'row',
@@ -1899,19 +1338,19 @@ const styles = StyleSheet.create({
   },
   stateText: {
     fontSize: 15,
-    color: colors.muted,
+    color: '#C7C7CC',
     textAlign: 'center',
   },
   emptyTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
     textAlign: 'center',
   },
   emptyText: {
     fontSize: 15,
     lineHeight: 23,
-    color: colors.muted,
+    color: '#C7C7CC',
     textAlign: 'center',
   },
   retryButton: {
@@ -1989,7 +1428,7 @@ const styles = StyleSheet.create({
     flexBasis: 'auto',
   },
   detailHeroCard: {
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.card,
     alignItems: 'center',
     paddingTop: 28,
@@ -2006,7 +1445,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.chipBg,
+    backgroundColor: '#2C2C2E',
   },
   detailHeroAvatar: {
     width: 112,
@@ -2030,7 +1469,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     fontSize: 28,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   detailHeroHeadline: {
     marginTop: 6,
@@ -2038,7 +1477,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '600',
     textAlign: 'center',
-    color: colors.ink,
+    color: '#E8E8E8',
   },
   detailHeroCity: {
     marginTop: 6,
@@ -2053,7 +1492,7 @@ const styles = StyleSheet.create({
   },
   detailStat: {
     flex: 1,
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2064,7 +1503,7 @@ const styles = StyleSheet.create({
   detailStatValue: {
     fontSize: 16,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   detailStatLabel: {
     marginTop: 2,
@@ -2074,7 +1513,7 @@ const styles = StyleSheet.create({
   },
   detailBlockCard: {
     marginTop: 12,
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.card,
     paddingHorizontal: 18,
     paddingVertical: 18,
@@ -2086,17 +1525,17 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
-    color: colors.mintDeep,
+    color: '#3DDC97',
   },
   detailBlockText: {
     fontSize: 16,
     lineHeight: 24,
-    color: colors.ink,
+    color: '#E8E8E8',
   },
   detailPriceHero: {
     fontSize: 32,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   detailPriceUnit: {
     fontSize: 16,
@@ -2109,7 +1548,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   detailChip: {
-    backgroundColor: colors.badgeMint,
+    backgroundColor: '#2C2C2E',
     borderRadius: radii.chip,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -2117,7 +1556,7 @@ const styles = StyleSheet.create({
   detailChipLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.mintDeep,
+    color: '#E8E8E8',
   },
   detailFormatCard: {
     marginTop: 12,
@@ -2129,7 +1568,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     fontSize: 16,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   detailReview: {
     marginTop: 14,
@@ -2156,11 +1595,11 @@ const styles = StyleSheet.create({
   detailReviewAuthor: {
     fontSize: 15,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
   },
   detailReviewDate: {
     fontSize: 13,
-    color: colors.mutedSoft,
+    color: '#A1A1A6',
   },
   detailReviewRating: {
     marginTop: 4,
@@ -2229,7 +1668,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 28,
-    backgroundColor: colors.page,
+    backgroundColor: '#111111',
   },
   detailMessageButton: {
     height: 56,

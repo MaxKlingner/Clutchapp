@@ -10,11 +10,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 
-import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
+import TutorProfileDetail from '../components/TutorProfileDetail';
+import { colors, radii } from '../constants/theme';
 import { fetchFavoriteTutors, removeFavoriteTutor } from '../lib/supabase';
 
 function getInitials(name) {
@@ -27,20 +29,31 @@ function getInitials(name) {
     .toUpperCase();
 }
 
+function firstName(fullName) {
+  return String(fullName || 'Tuteur').trim().split(/\s+/)[0] || 'Tuteur';
+}
+
 function formatRate(rate) {
   const value = Number(rate);
   if (!Number.isFinite(value)) return '—';
   return Number.isInteger(value) ? `${value}` : value.toFixed(2);
 }
 
+function subjectsOf(tutor) {
+  const list = (tutor?.specialties?.length ? tutor.specialties : [tutor?.subject])
+    .filter((item) => item && String(item).toLowerCase() !== 'matière');
+  return list;
+}
+
 export default function FavoritesScreen() {
+  const isFocused = useIsFocused();
   const { userId } = useAuth();
-  const navigation = useNavigation();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [removingId, setRemovingId] = useState(null);
+  const [opened, setOpened] = useState(null);
 
   async function loadFavorites({ soft = false } = {}) {
     if (!userId) {
@@ -80,6 +93,7 @@ export default function FavoritesScreen() {
     setError(null);
     const previous = items;
     setItems((prev) => prev.filter((row) => row.tutorId !== tutorId));
+    if (opened?.id === tutorId) setOpened(null);
     try {
       await removeFavoriteTutor(userId, tutorId);
     } catch (err) {
@@ -90,25 +104,25 @@ export default function FavoritesScreen() {
     }
   }
 
+  const countLabel =
+    items.length === 1
+      ? '1 tuteur sauvegardé'
+      : `${items.length} tuteurs sauvegardés`;
+
   return (
     <View style={styles.root}>
-      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
+      {isFocused ? <StatusBar style="light" /> : null}
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <Text style={styles.title}>Mes favoris</Text>
-          <Pressable
-            style={styles.headerIconButton}
-            onPress={() => navigation.navigate('Settings')}
-            accessibilityLabel="Réglages"
-            hitSlop={8}
-          >
-            <Ionicons name="settings-outline" size={22} color={colors.white} />
-          </Pressable>
+          <Text style={styles.title}>Favoris</Text>
+          <Text style={styles.subtitle}>
+            {loading ? 'Chargement…' : countLabel}
+          </Text>
         </View>
 
         {loading ? (
           <View style={styles.stateCard}>
-            <ActivityIndicator size="large" color={colors.mintDeep} />
+            <ActivityIndicator size="large" color="#C7C7CC" />
             <Text style={styles.stateText}>Chargement des favoris…</Text>
           </View>
         ) : error && items.length === 0 ? (
@@ -127,104 +141,101 @@ export default function FavoritesScreen() {
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={onRefresh}
-                tintColor={colors.mintDeep}
+                tintColor="#C7C7CC"
               />
             }
           >
             {error ? <Text style={styles.inlineError}>{error}</Text> : null}
 
             {items.length === 0 ? (
-              <View style={styles.stateCard}>
-                <Ionicons name="heart-outline" size={36} color={colors.mintDeep} />
-                <Text style={styles.emptyTitle}>Aucun favori</Text>
+              <View style={styles.emptyPanel}>
+                <View style={styles.emptyIcon}>
+                  <Ionicons name="heart" size={28} color="#3DDC97" />
+                </View>
+                <Text style={styles.emptyTitle}>Rien de sauvegardé</Text>
                 <Text style={styles.emptyText}>
-                  Sur Découvrir, appuie sur le cœur pour sauvegarder un tuteur.
+                  Les tuteurs que tu gardes apparaissent ici, avec leur tarif,
+                  leur ville et leurs cours.
                 </Text>
+                {[
+                  ['heart-outline', 'Appuie sur le cœur dans Découvrir'],
+                  ['person-outline', 'Retrouve la fiche complète ici'],
+                  ['chatbubble-ellipses-outline', 'Écris-lui depuis son profil'],
+                ].map(([icon, label]) => (
+                  <View key={label} style={styles.hintRow}>
+                    <View style={styles.hintIcon}>
+                      <Ionicons name={icon} size={18} color="#E8E8E8" />
+                    </View>
+                    <Text style={styles.hintLabel}>{label}</Text>
+                  </View>
+                ))}
               </View>
             ) : (
               items.map((row) => {
                 const tutor = row.tutor;
+                const subjects = subjectsOf(tutor);
                 return (
-                  <View key={row.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <View style={styles.avatar}>
-                        {tutor.avatarUrl ? (
-                          <Image
-                            source={{ uri: tutor.avatarUrl }}
-                            style={styles.avatarImage}
-                          />
-                        ) : (
-                          <Text style={styles.avatarText}>
-                            {getInitials(tutor.name)}
-                          </Text>
-                        )}
-                      </View>
-                      <View style={styles.cardMain}>
-                        <Text style={styles.name} numberOfLines={1}>
-                          {tutor.name}
+                  <Pressable
+                    key={row.id}
+                    style={styles.card}
+                    onPress={() => setOpened(tutor)}
+                    accessibilityLabel={`Voir le profil de ${firstName(tutor.name)}`}
+                  >
+                    <View style={styles.avatar}>
+                      {tutor.avatarUrl ? (
+                        <Image
+                          source={{ uri: tutor.avatarUrl }}
+                          style={styles.avatarImage}
+                        />
+                      ) : (
+                        <Text style={styles.avatarText}>
+                          {getInitials(tutor.name)}
                         </Text>
-                        {tutor.city ? (
-                          <Text style={styles.meta} numberOfLines={1}>
-                            {tutor.city}
-                            {tutor.postalCode ? ` · ${tutor.postalCode}` : ''}
-                          </Text>
-                        ) : null}
-                        <Text style={styles.meta}>
-                          {(tutor.rating || 0) > 0
-                            ? `★ ${tutor.rating.toFixed(1)}`
-                            : '★ —'}
-                          {' · '}
-                          {formatRate(tutor.hourlyRate)} €/h
-                        </Text>
-                      </View>
-                      <Pressable
-                        style={styles.heartButton}
-                        onPress={() => onRemove(tutor.id)}
-                        disabled={removingId === tutor.id}
-                        accessibilityLabel="Retirer des favoris"
-                        hitSlop={8}
-                      >
-                        {removingId === tutor.id ? (
-                          <ActivityIndicator size="small" color={colors.danger} />
-                        ) : (
-                          <Ionicons name="heart" size={22} color={colors.danger} />
-                        )}
-                      </Pressable>
+                      )}
                     </View>
-
-                    {(tutor.teachingFormats?.length
-                      ? tutor.teachingFormats
-                      : []
-                    ).length > 0 ? (
-                      <View style={styles.chipWrap}>
-                        {tutor.teachingFormats.map((format) => (
-                          <View key={`${tutor.id}-${format}`} style={styles.formatChip}>
-                            <Text style={styles.formatChipLabel}>{format}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    ) : null}
-
-                    <View style={styles.chipWrap}>
-                      {(tutor.specialties?.length
-                        ? tutor.specialties
-                        : [tutor.subject]
-                      )
-                        .filter(Boolean)
-                        .slice(0, 4)
-                        .map((skill) => (
-                          <View key={`${tutor.id}-${skill}`} style={styles.specialtyChip}>
-                            <Text style={styles.specialtyChipLabel}>{skill}</Text>
-                          </View>
-                        ))}
+                    <View style={styles.cardMain}>
+                      <Text style={styles.name} numberOfLines={1}>
+                        {firstName(tutor.name)}
+                      </Text>
+                      <Text style={styles.headline} numberOfLines={1}>
+                        {subjects.length
+                          ? subjects.slice(0, 2).join(' · ')
+                          : 'Cours à préciser'}
+                      </Text>
+                      <Text style={styles.meta} numberOfLines={1}>
+                        {tutor.city || 'Ville à préciser'}
+                        {' · '}
+                        {formatRate(tutor.hourlyRate)} €/h
+                      </Text>
                     </View>
-                  </View>
+                    <Pressable
+                      style={styles.heartButton}
+                      onPress={() => onRemove(tutor.id)}
+                      disabled={removingId === tutor.id}
+                      accessibilityLabel="Retirer des favoris"
+                      hitSlop={8}
+                    >
+                      {removingId === tutor.id ? (
+                        <ActivityIndicator size="small" color="#3DDC97" />
+                      ) : (
+                        <Ionicons name="heart" size={20} color="#3DDC97" />
+                      )}
+                    </Pressable>
+                  </Pressable>
                 );
               })
             )}
           </ScrollView>
         )}
       </SafeAreaView>
+      <TutorProfileDetail
+        tutor={opened}
+        visible={Boolean(opened)}
+        onClose={() => {
+          setOpened(null);
+          loadFavorites({ soft: true });
+        }}
+      />
     </View>
   );
 }
@@ -232,76 +243,101 @@ export default function FavoritesScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.page,
-  },
-  mintBand: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: colors.mint,
+    backgroundColor: '#111111',
   },
   safe: {
     flex: 1,
   },
   header: {
-    minHeight: 64,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 18,
+    paddingTop: 8,
+    paddingBottom: 14,
   },
   title: {
+    textAlign: 'center',
     fontSize: 28,
     fontWeight: '800',
     color: colors.white,
   },
-  headerIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.38)',
+  subtitle: {
+    marginTop: 4,
+    textAlign: 'center',
+    fontSize: 15,
+    color: '#A1A1A6',
   },
   list: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingBottom: 28,
     gap: 12,
   },
   stateCard: {
-    marginHorizontal: 16,
+    marginHorizontal: 20,
     marginTop: 12,
-    backgroundColor: colors.card,
+    backgroundColor: '#1C1C1E',
     borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
     padding: 28,
     alignItems: 'center',
     gap: 10,
-    ...shadows.card,
   },
   stateText: {
-    color: colors.muted,
+    color: '#C7C7CC',
     fontSize: 14,
+  },
+  emptyPanel: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    paddingHorizontal: 20,
+    paddingVertical: 28,
+    gap: 12,
+  },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#2C2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.ink,
-    textAlign: 'center',
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.white,
   },
   emptyText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#C7C7CC',
+  },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#111111',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  hintIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#2C2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hintLabel: {
+    flex: 1,
     fontSize: 14,
-    color: colors.muted,
-    textAlign: 'center',
-    lineHeight: 20,
+    fontWeight: '600',
+    color: '#E8E8E8',
   },
   retryButton: {
     marginTop: 8,
-    backgroundColor: colors.mintDeep,
+    backgroundColor: '#1B6B45',
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: radii.button,
@@ -313,24 +349,22 @@ const styles = StyleSheet.create({
   inlineError: {
     color: colors.danger,
     fontSize: 13,
-    marginBottom: 4,
   },
   card: {
-    backgroundColor: colors.card,
-    borderRadius: radii.card,
-    padding: 16,
-    ...shadows.card,
-  },
-  cardTop: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#1A1A1C',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    padding: 14,
     gap: 12,
   },
   avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: colors.mintSoft,
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#2C2C2E',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -340,23 +374,29 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   avatarText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
-    color: colors.mintDeep,
+    color: '#E8E8E8',
   },
   cardMain: {
     flex: 1,
     minWidth: 0,
-    gap: 2,
   },
   name: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.white,
+  },
+  headline: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#E8E8E8',
   },
   meta: {
+    marginTop: 2,
     fontSize: 13,
-    color: colors.muted,
+    color: '#A1A1A6',
   },
   heartButton: {
     width: 40,
@@ -364,34 +404,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.badgeMint,
-  },
-  chipWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 12,
-  },
-  specialtyChip: {
-    backgroundColor: colors.chipBg,
-    borderRadius: radii.chip,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  specialtyChipLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.ink,
-  },
-  formatChip: {
-    backgroundColor: colors.badgeMint,
-    borderRadius: radii.chip,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  formatChipLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.mintDeep,
+    backgroundColor: '#2C2C2E',
   },
 });

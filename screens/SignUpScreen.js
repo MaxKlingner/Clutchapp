@@ -7,13 +7,11 @@ import AuthStep, { authStyles } from '../components/AuthStep';
 import { saveEmailConsent } from '../lib/emailConsent';
 import { resolveLocationQuery, suggestLocations } from '../lib/geo';
 import { ROLES, saveSignupProfile } from '../lib/roles';
-import { setTutorLocality } from '../lib/supabase';
 import {
-  FORMAT_AT_STUDENT,
-  FORMAT_AT_TUTOR,
-  FORMAT_ONLINE,
+  FORMAT_IN_PERSON,
+  FORMAT_REMOTE,
   SPECIALTIES,
-  STUDENT_LEVELS,
+  STUDENT_LEVEL_GROUPS,
 } from '../lib/tutorConstants';
 
 function isEmail(value) {
@@ -222,16 +220,6 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
         latitude: place.latitude,
         longitude: place.longitude,
       });
-      if (role === ROLES.TUTOR) {
-        await setTutorLocality({
-          clerkId: accountId,
-          fullName: `${given} ${family}`.trim(),
-          city: place.city,
-          postalCode: place.postalCode,
-          latitude: place.latitude,
-          longitude: place.longitude,
-        });
-      }
       await setActive({ session: sessionId });
     } catch (err) {
       setError(err?.message || 'Impossible d’enregistrer ces informations.');
@@ -384,7 +372,10 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
     },
     level: {
       title: 'Quel niveau ?',
-      options: STUDENT_LEVELS.map((item) => ({ value: item, label: item })),
+      options: STUDENT_LEVEL_GROUPS.map((group) => ({
+        value: group.label,
+        label: group.label,
+      })),
       selected: level,
       onSelect: setLevel,
       onSkip: () => {
@@ -402,9 +393,8 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
     format: {
       title: 'Où se passe le cours ?',
       options: [
-        { value: FORMAT_AT_STUDENT, label: 'Chez moi' },
-        { value: FORMAT_AT_TUTOR, label: 'Chez le professeur' },
-        { value: FORMAT_ONLINE, label: 'En ligne' },
+        { value: FORMAT_IN_PERSON, label: 'Face à face' },
+        { value: FORMAT_REMOTE, label: 'À distance' },
       ],
       selected: coursePlace,
       onSelect: setCoursePlace,

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../constants/theme';
@@ -9,7 +9,6 @@ import {
 } from '../hooks/useTutorFilters';
 import {
   STUDY_YEARS,
-  SWIPE_FILTERS,
   TEACHING_FORMATS,
 } from '../lib/tutorConstants';
 import { StepSlider } from './StepSlider';
@@ -117,44 +116,13 @@ export default function TutorFilterFields({ filters, forceOpen = false }) {
   return (
     <View>
       <FilterSection
-        title="Lieu"
-        summary={filters.lieuSummary}
-        summaryActive={Boolean(filters.cityQuery.trim()) || filters.radiusKm != null}
+        title="Distance"
+        summary={filters.radiusKm != null ? `${filters.radiusKm} km` : 'Illimité'}
+        summaryActive={filters.radiusKm != null}
         open={sectionOpen('lieu')}
         locked={forceOpen}
         onToggle={() => toggle('lieu')}
       >
-        <Text style={styles.filterHint}>Adresse</Text>
-        <TextInput
-          style={styles.drawerInput}
-          value={filters.cityQuery}
-          onChangeText={filters.onCityChange}
-          placeholder="Ville, rue ou code postal"
-          placeholderTextColor={colors.mutedSoft}
-          autoCapitalize="words"
-          autoCorrect={false}
-        />
-        {filters.locationSuggestions.length > 0 ? (
-          <View style={styles.suggestList}>
-            {filters.locationSuggestions.map((item) => (
-              <Pressable
-                key={item.key}
-                style={styles.suggestRow}
-                onPress={() => filters.selectSuggestion(item)}
-              >
-                <Ionicons name="location-outline" size={16} color={colors.muted} />
-                <Text style={styles.suggestLabel}>{item.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-        {filters.searchOrigin ? (
-          <Text style={styles.originHint}>
-            Autour de {filters.searchOrigin.label}
-            {filters.radiusKm != null ? ` · ${filters.radiusKm} km` : ' · Illimité'}
-          </Text>
-        ) : null}
-        <Text style={styles.filterHint}>Rayon</Text>
         <StepSlider
           steps={RADIUS_STEPS}
           indexes={[filters.radiusIndex]}
@@ -167,29 +135,6 @@ export default function TutorFilterFields({ filters, forceOpen = false }) {
           minLabel="5 km"
           maxLabel="Illimité"
         />
-      </FilterSection>
-
-      <FilterSection
-        title="Matière"
-        summary={filters.subjectSummary}
-        summaryActive={Boolean(filters.activeFilter)}
-        open={sectionOpen('matiere')}
-        locked={forceOpen}
-        onToggle={() => toggle('matiere')}
-      >
-        <FilterChoice
-          label="Toutes"
-          active={!filters.activeFilter}
-          onPress={() => filters.onSelectFilter(null)}
-        />
-        {SWIPE_FILTERS.map((label) => (
-          <FilterChoice
-            key={label}
-            label={label}
-            active={filters.activeFilter === label}
-            onPress={() => filters.onSelectFilter(label)}
-          />
-        ))}
       </FilterSection>
 
       <FilterSection

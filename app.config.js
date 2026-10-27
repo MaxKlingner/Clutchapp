@@ -65,9 +65,9 @@ export default {
         'expo-image-picker',
         {
           photosPermission:
-            'Clutch utilise ta bibliothèque photo pour ta photo de profil tuteur.',
+            'Clutch a besoin d’accéder à tes photos pour choisir ta photo de profil.',
           cameraPermission:
-            'Clutch utilise la caméra pour ta photo de profil tuteur.',
+            'Clutch a besoin de l’appareil photo pour prendre ta photo de profil.',
         },
       ],
       [

@@ -4,13 +4,42 @@ import { NativeModules } from 'react-native';
 import { suggestLocations, tutorMatchesLocation } from '../lib/geo';
 import {
   STUDENT_LEVELS,
+  STUDENT_LEVEL_GROUPS,
   STUDY_YEARS,
+  studentLevelGroupId,
+  normalizeTeachingFormats,
   tutorMatchesCourseType,
 } from '../lib/tutorConstants';
 
 export const PRICE_STEPS = [15, 20, 25, 30, 35, 40, 45, 50, null];
 export const RADIUS_STEPS = [5, 10, 15, 20, 30, 50, null];
 export const STUDENT_STEPS = [null, ...STUDENT_LEVELS];
+
+function foldText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+export function subjectNamesMatch(name, query) {
+  const left = foldText(name);
+  const right = foldText(query);
+  if (!left || !right) return false;
+  if (left === right || left.startsWith(right) || right.startsWith(left)) return true;
+  if (left.includes(right) || right.includes(left)) return true;
+  const limit = Math.min(left.length, right.length);
+  let shared = 0;
+  while (shared < limit && left[shared] === right[shared]) shared += 1;
+  return shared >= 4 || (shared >= 3 && (shared === left.length || shared === right.length));
+}
+
+function tutorMatchesSubject(tutor, query) {
+  const needle = foldText(query);
+  if (!needle) return true;
+  return (tutor.specialties ?? []).some((skill) => subjectNamesMatch(skill, needle));
+}
 
 function nearestStepIndex(steps, value) {
   const exact = steps.findIndex((step) => Object.is(step, value));
@@ -122,7 +151,7 @@ export function useTutorFilters() {
   const [radiusKm, setRadiusKm] = useState(null);
   const [formatFilters, setFormatFilters] = useState([]);
   const [maxHourlyRate, setMaxHourlyRate] = useState(null);
-  const [studentLevel, setStudentLevel] = useState(null);
+  const [studentLevelGroups, setStudentLevelGroups] = useState([]);
   const [tutorYearFilters, setTutorYearFilters] = useState([]);
   const [expandedFilter, setExpandedFilter] = useState(null);
   const radiusKmRef = useRef(null);
@@ -138,12 +167,8 @@ export function useTutorFilters() {
 
   const matchesTutor = useCallback(
     (tutor) => {
-      if (activeFilter) {
-        const needle = activeFilter.toLowerCase();
-        const specialtyOk = (tutor.specialties ?? []).some(
-          (skill) => String(skill).toLowerCase() === needle
-        );
-        if (!specialtyOk) return false;
+      if (activeFilter && !tutorMatchesSubject(tutor, activeFilter)) {
+        return false;
       }
 
       if (!tutorMatchesLocation(tutor, cityQuery, radiusKm, searchOrigin)) {
@@ -158,9 +183,14 @@ export function useTutorFilters() {
         return false;
       }
 
-      if (studentLevel) {
+      if (studentLevelGroups.length > 0) {
+        const accepted = new Set(
+          STUDENT_LEVEL_GROUPS.filter((group) => studentLevelGroups.includes(group.id)).flatMap(
+            (group) => group.levels
+          )
+        );
         const levels = tutor.taughtLevels ?? [];
-        if (!levels.includes(studentLevel)) return false;
+        if (!levels.some((level) => accepted.has(level))) return false;
       }
 
       if (
@@ -179,7 +209,7 @@ export function useTutorFilters() {
       radiusKm,
       formatFilters,
       maxHourlyRate,
-      studentLevel,
+      studentLevelGroups,
       tutorYearFilters,
     ]
   );
@@ -187,6 +217,14 @@ export function useTutorFilters() {
   const onSelectFilter = useCallback(
     (label) => {
       setActiveFilter((prev) => (prev === label ? null : label));
+      resetDeck();
+    },
+    [resetDeck]
+  );
+
+  const setSubjectFilter = useCallback(
+    (label) => {
+      setActiveFilter(label || null);
       resetDeck();
     },
     [resetDeck]
@@ -217,6 +255,11 @@ export function useTutorFilters() {
     resetDeck();
   }, [resetDeck]);
 
+  const replaceFormatFilters = useCallback((next) => {
+    setFormatFilters(Array.isArray(next) ? next : []);
+    resetDeck();
+  }, [resetDeck]);
+
   const clearAllFilters = useCallback(() => {
     setActiveFilter(null);
     setCityQuery('');
@@ -225,7 +268,7 @@ export function useTutorFilters() {
     setRadiusKm(null);
     setFormatFilters([]);
     setMaxHourlyRate(null);
-    setStudentLevel(null);
+    setStudentLevelGroups([]);
     setTutorYearFilters([]);
     resetDeck();
   }, [resetDeck]);
@@ -257,8 +300,11 @@ export function useTutorFilters() {
   const seedSearch = useCallback(
     (saved) => {
       if (saved?.subject && saved.subject !== 'Autre') setActiveFilter(saved.subject);
-      if (saved?.studentLevel) setStudentLevel(saved.studentLevel);
-      if (saved?.format) setFormatFilters([saved.format]);
+      if (saved?.studentLevel) {
+        const groupId = studentLevelGroupId(saved.studentLevel);
+        if (groupId) setStudentLevelGroups([groupId]);
+      }
+      if (saved?.format) setFormatFilters(normalizeTeachingFormats([saved.format]));
       resetDeck();
     },
     [resetDeck]
@@ -302,7 +348,19 @@ export function useTutorFilters() {
 
   const onSelectStudentLevel = useCallback(
     (level) => {
-      setStudentLevel(level);
+      const groupId = studentLevelGroupId(level);
+      setStudentLevelGroups(groupId ? [groupId] : []);
+      resetDeck();
+    },
+    [resetDeck]
+  );
+
+  const setLevelFilters = useCallback(
+    (groups) => {
+      const next = (Array.isArray(groups) ? groups : []).filter((id) =>
+        STUDENT_LEVEL_GROUPS.some((group) => group.id === id)
+      );
+      setStudentLevelGroups(next);
       resetDeck();
     },
     [resetDeck]
@@ -389,7 +447,12 @@ export function useTutorFilters() {
 
   const priceIndex = nearestStepIndex(PRICE_STEPS, maxHourlyRate);
   const radiusIndex = nearestStepIndex(RADIUS_STEPS, radiusKm);
-  const studentIndex = Math.max(STUDENT_STEPS.indexOf(studentLevel), 0);
+  const studentIndex = Math.max(
+    STUDENT_STEPS.indexOf(
+      STUDENT_LEVEL_GROUPS.find((group) => group.id === studentLevelGroups[0])?.levels[0] || null
+    ),
+    0
+  );
   const tutorSpanIndexes = tutorYearFilters
     .map((year) => STUDY_YEARS.indexOf(year))
     .filter((yearIndex) => yearIndex >= 0);
@@ -407,7 +470,11 @@ export function useTutorFilters() {
   const subjectSummary = activeFilter || 'Toutes';
   const formatSummary = formatFilters.length ? formatFilters.join(', ') : 'Tous';
   const priceSummary = maxHourlyRate != null ? `${maxHourlyRate} € max` : 'Tout';
-  const studentSummary = studentLevel || 'Tous';
+  const studentSummary = studentLevelGroups.length
+    ? STUDENT_LEVEL_GROUPS.filter((group) => studentLevelGroups.includes(group.id))
+        .map((group) => group.label)
+        .join(', ')
+    : 'Tous';
   const tutorYearSummary =
     tutorLow === 0 && tutorHigh === STUDY_YEARS.length - 1
       ? 'Tous'
@@ -422,7 +489,7 @@ export function useTutorFilters() {
     radiusKm != null ||
     formatFilters.length > 0 ||
     maxHourlyRate != null ||
-    Boolean(studentLevel) ||
+    studentLevelGroups.length > 0 ||
     tutorYearFilters.length > 0;
 
   return {
@@ -432,14 +499,18 @@ export function useTutorFilters() {
     searchOrigin,
     locationSuggestions,
     radiusKm,
+    maxHourlyRate,
+    studentLevelGroups,
     formatFilters,
     expandedFilter,
     hasActiveFilters,
     matchesTutor,
     onSelectFilter,
+    setSubjectFilter,
     onSelectRadius,
     onToggleFormatFilter,
     clearFormats,
+    replaceFormatFilters,
     clearAllFilters,
     seedPlace,
     seedSearch,
@@ -448,6 +519,7 @@ export function useTutorFilters() {
     toggleFilterSection,
     onSelectMaxPrice,
     onSelectStudentLevel,
+    setLevelFilters,
     onSelectTutorSpan,
     priceIndex,
     radiusIndex,
