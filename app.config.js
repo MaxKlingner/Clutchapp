@@ -17,7 +17,7 @@ export default {
     name: displayName,
     slug: 'clutch',
     scheme: IS_DEV ? 'clutch-dev' : 'clutch',
-    version: '1.0.2',
+    version: '1.0.3',
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'light',
