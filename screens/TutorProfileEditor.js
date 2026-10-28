@@ -3,9 +3,8 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  NativeModules,
+  Linking,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,20 +13,26 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 
 import {
-  HOURLY_RATES,
   SPECIALTIES,
-  STUDENT_LEVELS,
+  STUDENT_LEVEL_GROUPS,
   STUDY_YEARS,
   TEACHING_FORMATS,
+  taughtLevelGroupIds,
+  taughtLevelsFromGroups,
 } from '../lib/tutorConstants';
-import { BELGIAN_LOCATIONS, resolveLocationQuery } from '../lib/geo';
+import { colors } from '../constants/theme';
+import { resolveLocationQuery } from '../lib/geo';
 import { fetchUserPlace } from '../lib/roles';
 import {
   ensureTutorProfile,
+  setTutorAvatarUrl,
   updateTutorProfile,
 } from '../lib/supabase';
+
+const BIO_MAX = 200;
 
 function getInitials(name) {
   return String(name || '?')
@@ -37,34 +42,6 @@ function getInitials(name) {
     .join('')
     .slice(0, 2)
     .toUpperCase();
-}
-
-function isLocalUri(uri) {
-  if (!uri) return false;
-  return (
-    uri.startsWith('file:') ||
-    uri.startsWith('content:') ||
-    uri.startsWith('ph:') ||
-    uri.startsWith('assets-library:')
-  );
-}
-
-function isRemoteUri(uri) {
-  if (!uri) return false;
-  return /^https?:\/\//i.test(uri);
-}
-
-/** Ne crash pas si le binaire natif n’a pas encore expo-image-picker. */
-function getImagePicker() {
-  const native =
-    NativeModules.ExponentImagePicker || NativeModules.ExpoImagePicker;
-  if (!native) return null;
-  try {
-    // require synchrone — lève si le module natif est absent
-    return require('expo-image-picker');
-  } catch {
-    return null;
-  }
 }
 
 export default function TutorProfileEditor() {
@@ -78,20 +55,15 @@ export default function TutorProfileEditor() {
   const [specialties, setSpecialties] = useState([]);
   const [teachingFormats, setTeachingFormats] = useState([]);
   const [taughtLevels, setTaughtLevels] = useState([]);
-  const [hourlyRate, setHourlyRate] = useState(25);
+  const [hourlyRate, setHourlyRate] = useState('');
   const [studyYear, setStudyYear] = useState('Master');
   const [city, setCity] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [latitude, setLatitude] = useState(null);
   const [longitude, setLongitude] = useState(null);
-  const [avatarUri, setAvatarUri] = useState(null);
-  const [avatarRemoved, setAvatarRemoved] = useState(false);
-  const [avatarUrlDraft, setAvatarUrlDraft] = useState('');
+  const [photoPreview, setPhotoPreview] = useState(null);
 
-  const clerkImageUrl = user?.imageUrl || null;
-  const imagePickerAvailable = Boolean(
-    NativeModules.ExponentImagePicker || NativeModules.ExpoImagePicker
-  );
+  const photoUri = photoPreview || user?.imageUrl || null;
 
   async function loadProfile() {
     if (!userId) return;
@@ -113,34 +85,35 @@ export default function TutorProfileEditor() {
         setSpecialties([]);
         setTeachingFormats([]);
         setTaughtLevels([]);
-        setHourlyRate(25);
+        setHourlyRate('');
         setStudyYear('Master');
         setCity(place?.city || '');
         setPostalCode(place?.postalCode || '');
         setLatitude(place?.latitude ?? null);
         setLongitude(place?.longitude ?? null);
-        setAvatarUri(null);
-        setAvatarUrlDraft('');
-        setAvatarRemoved(false);
+        setPhotoPreview(null);
         return;
       }
 
       setFullName(profile.name || defaultName);
-      setBio(profile.bio || '');
+      setBio(String(profile.bio || '').slice(0, BIO_MAX));
       setSpecialties(profile.specialties?.length ? profile.specialties : []);
       setTeachingFormats(
         profile.teachingFormats?.length ? profile.teachingFormats : []
       );
-      setTaughtLevels(profile.taughtLevels?.length ? profile.taughtLevels : []);
-      setHourlyRate(profile.hourlyRate || 25);
+      setTaughtLevels(taughtLevelGroupIds(profile.taughtLevels));
+      setHourlyRate(
+        profile.hourlyRate > 0 ? String(profile.hourlyRate).replace('.', ',') : ''
+      );
       setStudyYear(profile.studyYear || 'Master');
       setCity(profile.city || '');
       setPostalCode(profile.postalCode || '');
       setLatitude(profile.latitude ?? null);
       setLongitude(profile.longitude ?? null);
-      setAvatarUri(profile.avatarUrl || null);
-      setAvatarUrlDraft('');
-      setAvatarRemoved(false);
+      setPhotoPreview(null);
+      if (user?.imageUrl && user.imageUrl !== profile.avatarUrl) {
+        setTutorAvatarUrl(userId, user.imageUrl).catch(() => {});
+      }
     } catch (err) {
       setError(err?.message ?? 'Impossible de charger le profil.');
     } finally {
@@ -162,11 +135,11 @@ export default function TutorProfileEditor() {
     );
   }
 
-  function toggleTaughtLevel(label) {
+  function toggleTaughtLevel(groupId) {
     setTaughtLevels((prev) =>
-      prev.includes(label)
-        ? prev.filter((item) => item !== label)
-        : [...prev, label]
+      prev.includes(groupId)
+        ? prev.filter((item) => item !== groupId)
+        : [...prev, groupId]
     );
   }
 
@@ -186,87 +159,61 @@ export default function TutorProfileEditor() {
     return true;
   }
 
-  function selectPresetCity(loc) {
-    setCity(loc.name);
-    setPostalCode(loc.postalCodes?.[0] || '');
-    setLatitude(loc.latitude);
-    setLongitude(loc.longitude);
+  function onPickPhoto() {
+    if (saving || !user) return;
+    Alert.alert('Photo de profil', 'D’où vient la photo ?', [
+      { text: 'Prendre une photo', onPress: () => capturePhoto('camera') },
+      { text: 'Choisir dans la galerie', onPress: () => capturePhoto('library') },
+      { text: 'Annuler', style: 'cancel' },
+    ]);
   }
 
-  async function pickAvatarFromGallery() {
-    if (saving) return;
-
-    const ImagePicker = getImagePicker();
-    if (!ImagePicker) {
-      Alert.alert(
-        'Galerie indisponible',
-        'Ton app native ne contient pas encore le module photo. Utilise « Photo du compte » ou colle une URL d’image. Pour la galerie : rebuild le Dev Client (eas build --profile development).'
-      );
-      return;
-    }
-
+  async function capturePhoto(source) {
+    if (saving || !user) return;
     try {
       const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+        source === 'camera'
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         Alert.alert(
-          'Permission requise',
-          'Autorise l’accès à tes photos pour ajouter une photo de profil.'
+          'Accès refusé',
+          source === 'camera'
+            ? 'Autorise l’appareil photo pour prendre ta photo de profil.'
+            : 'Autorise la galerie pour choisir ta photo de profil.',
+          [
+            { text: 'Plus tard', style: 'cancel' },
+            { text: 'Ouvrir les réglages', onPress: () => Linking.openSettings() },
+          ]
         );
         return;
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const options = {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
-      });
-
-      if (result.canceled || !result.assets?.[0]?.uri) return;
-
-      setAvatarUri(result.assets[0].uri);
-      setAvatarRemoved(false);
-      setAvatarUrlDraft('');
+        base64: true,
+      };
+      const result =
+        source === 'camera'
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      setPhotoPreview(asset.uri);
+      const file = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+      await user.setProfileImage({ file });
+      await user.reload();
+      setPhotoPreview(null);
+      if (userId) await setTutorAvatarUrl(userId, user.imageUrl || null);
     } catch (err) {
       Alert.alert(
-        'Galerie indisponible',
-        err?.message ||
-          'Impossible d’ouvrir la galerie. Utilise la photo du compte ou une URL.'
+        'Photo',
+        err?.errors?.[0]?.message || err?.message || 'Impossible d’enregistrer la photo.'
       );
     }
-  }
-
-  function useClerkPhoto() {
-    if (!clerkImageUrl) {
-      Alert.alert(
-        'Pas de photo compte',
-        'Ton compte Clerk n’a pas encore de photo de profil.'
-      );
-      return;
-    }
-    setAvatarUri(clerkImageUrl);
-    setAvatarRemoved(false);
-    setAvatarUrlDraft('');
-  }
-
-  function applyAvatarUrl() {
-    const url = avatarUrlDraft.trim();
-    if (!isRemoteUri(url)) {
-      Alert.alert(
-        'URL invalide',
-        'Colle une adresse d’image qui commence par https://'
-      );
-      return;
-    }
-    setAvatarUri(url);
-    setAvatarRemoved(false);
-  }
-
-  function removeAvatar() {
-    setAvatarUri(null);
-    setAvatarRemoved(true);
-    setAvatarUrlDraft('');
   }
 
   async function onSave() {
@@ -297,6 +244,11 @@ export default function TutorProfileEditor() {
       );
       return;
     }
+    const rate = Number(String(hourlyRate).replace(',', '.'));
+    if (!Number.isFinite(rate) || rate <= 0) {
+      Alert.alert('Tarif horaire', 'Indique un tarif horaire en euros.');
+      return;
+    }
 
     setSaving(true);
     setError('');
@@ -318,31 +270,20 @@ export default function TutorProfileEditor() {
 
       const updates = {
         fullName,
-        bio,
+        bio: bio.slice(0, BIO_MAX),
         specialties,
         teachingFormats,
-        hourlyRate,
+        hourlyRate: rate,
         studyYear,
-        taughtLevels,
+        taughtLevels: taughtLevelsFromGroups(taughtLevels),
         city: nextCity,
         postalCode: nextPostal,
         latitude: nextLat,
         longitude: nextLng,
+        avatarUrl: user?.imageUrl || null,
       };
 
-      if (avatarRemoved) {
-        updates.avatarUrl = null;
-      } else if (avatarUri && isLocalUri(avatarUri)) {
-        updates.localAvatarUri = avatarUri;
-      } else if (avatarUri && isRemoteUri(avatarUri)) {
-        // Photo Clerk / URL : on stocke l’URL directement
-        updates.avatarUrl = avatarUri;
-      }
-
       const saved = await updateTutorProfile(userId, updates);
-      setAvatarUri(saved.avatarUrl || null);
-      setAvatarRemoved(false);
-      setAvatarUrlDraft('');
       setCity(saved.city || nextCity);
       setPostalCode(saved.postalCode || nextPostal);
       setLatitude(saved.latitude ?? nextLat);
@@ -360,287 +301,193 @@ export default function TutorProfileEditor() {
     }
   }
 
+  function renderChips({ items, isActive, onPress }) {
+    return (
+      <View style={styles.chipWrap}>
+        {items.map((item) => {
+          const key = typeof item === 'object' ? item.key : item;
+          const label = typeof item === 'object' ? item.label : item;
+          const active = isActive(item);
+          return (
+            <Pressable
+              key={key}
+              style={[styles.chip, active && styles.chipOn]}
+              onPress={() => onPress(item)}
+              disabled={saving}
+            >
+              <Text style={[styles.chipLabel, active && styles.chipLabelOn]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  }
+
   if (loading) {
     return (
       <View style={styles.loadingBox}>
-        <ActivityIndicator size="large" color="#1B5E3B" />
+        <ActivityIndicator color="#C7C7CC" />
         <Text style={styles.loadingText}>Chargement du profil…</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.eyebrow}>Profil tuteur</Text>
-      <Text style={styles.hint}>
-        Ces infos apparaissent dans le flux Swipe des parents.
-      </Text>
-
-      <Text style={styles.label}>Photo de profil</Text>
-      <View style={styles.avatarRow}>
-        <Pressable
-          style={styles.avatarButton}
-          onPress={
-            imagePickerAvailable ? pickAvatarFromGallery : useClerkPhoto
-          }
-          disabled={saving}
-          accessibilityLabel="Choisir une photo de profil"
-        >
-          {avatarUri ? (
-            <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarInitials}>{getInitials(fullName)}</Text>
-            </View>
-          )}
-          <View style={styles.avatarCamBadge}>
-            <Ionicons name="camera" size={14} color="#FFFFFF" />
-          </View>
-        </Pressable>
-        <View style={styles.avatarActions}>
-          {imagePickerAvailable ? (
+    <View>
+      <Text style={styles.section}>Photo</Text>
+      <View style={styles.card}>
+        <View style={styles.avatarRow}>
+          <View>
+            {photoUri ? (
+              <Image source={{ uri: photoUri }} style={styles.avatarImage} />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <Text style={styles.avatarInitials}>{getInitials(fullName)}</Text>
+              </View>
+            )}
             <Pressable
-              style={styles.avatarActionBtn}
-              onPress={pickAvatarFromGallery}
+              style={styles.editPhoto}
+              onPress={onPickPhoto}
+              disabled={saving}
+              accessibilityLabel="Modifier la photo"
+            >
+              <Ionicons name="pencil" size={14} color={colors.white} />
+            </Pressable>
+          </View>
+          <View style={styles.avatarActions}>
+            <Pressable
+              style={[styles.pill, styles.pillPrimary]}
+              onPress={onPickPhoto}
               disabled={saving}
             >
-              <Text style={styles.avatarActionLabel}>
-                {avatarUri ? 'Choisir depuis la galerie' : 'Ajouter une photo'}
+              <Text style={[styles.pillLabel, styles.pillLabelPrimary]}>
+                {photoUri ? 'Changer de photo' : 'Ajouter une photo'}
               </Text>
             </Pressable>
-          ) : null}
-          <Pressable
-            style={[
-              styles.avatarActionBtn,
-              !imagePickerAvailable && styles.avatarActionBtnPrimary,
-              imagePickerAvailable && styles.avatarActionBtnSecondary,
-            ]}
-            onPress={useClerkPhoto}
-            disabled={saving || !clerkImageUrl}
-          >
-            <Text
-              style={[
-                styles.avatarActionLabel,
-                imagePickerAvailable && styles.avatarActionLabelDark,
-              ]}
-            >
-              Photo du compte
+            <Text style={styles.photoHint}>
+              C’est la même photo que celle de ton compte.
             </Text>
-          </Pressable>
-          {avatarUri ? (
-            <Pressable
-              style={styles.avatarRemoveBtn}
-              onPress={removeAvatar}
-              disabled={saving}
-            >
-              <Text style={styles.avatarRemoveLabel}>Retirer</Text>
-            </Pressable>
-          ) : null}
+          </View>
         </View>
       </View>
 
-      {!imagePickerAvailable ? (
-        <Text style={styles.fallbackHint}>
-          Galerie native indisponible sur ce build. Utilise la photo du compte,
-          ou colle une URL ci-dessous. (Rebuild Dev Client pour la galerie.)
+      <Text style={styles.section}>Identité</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Nom affiché</Text>
+        <TextInput
+          style={styles.input}
+          value={fullName}
+          onChangeText={setFullName}
+          placeholder="Ton prénom et nom"
+          placeholderTextColor="#8E8E93"
+          keyboardAppearance="dark"
+          editable={!saving}
+        />
+        <Text style={[styles.label, styles.labelSpaced]}>Biographie</Text>
+        <TextInput
+          style={[styles.input, styles.bioInput]}
+          value={bio}
+          onChangeText={(value) => setBio(value.slice(0, BIO_MAX))}
+          placeholder="Présente-toi en quelques phrases…"
+          placeholderTextColor="#8E8E93"
+          keyboardAppearance="dark"
+          multiline
+          maxLength={BIO_MAX}
+          textAlignVertical="top"
+          editable={!saving}
+        />
+        <Text style={styles.counter}>
+          {bio.length}/{BIO_MAX}
         </Text>
-      ) : null}
+      </View>
 
-      <TextInput
-        style={styles.input}
-        value={avatarUrlDraft}
-        onChangeText={setAvatarUrlDraft}
-        placeholder="Coller une URL d’image (https://…)"
-        placeholderTextColor="#7A9185"
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={!saving}
-      />
-      <Pressable
-        style={[styles.urlApplyBtn, saving && styles.disabled]}
-        onPress={applyAvatarUrl}
-        disabled={saving}
-      >
-        <Text style={styles.urlApplyLabel}>Utiliser cette URL</Text>
-      </Pressable>
-
-      <Text style={styles.label}>Nom affiché</Text>
-      <TextInput
-        style={styles.input}
-        value={fullName}
-        onChangeText={setFullName}
-        placeholder="Ton prénom et nom"
-        placeholderTextColor="#7A9185"
-        editable={!saving}
-      />
-
-      <Text style={styles.label}>Spécialités</Text>
-      <View style={styles.chipWrap}>
-        {SPECIALTIES.map((item) => {
-          const active = specialties.includes(item);
-          return (
-            <Pressable
-              key={item}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => toggleSpecialty(item)}
-              disabled={saving}
-            >
-              <Text
-                style={[styles.chipLabel, active && styles.chipLabelActive]}
-              >
-                {item}
-              </Text>
-            </Pressable>
-          );
+      <Text style={styles.section}>Cours</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Matières</Text>
+        {renderChips({
+          items: SPECIALTIES,
+          isActive: (item) => specialties.includes(item),
+          onPress: toggleSpecialty,
+        })}
+        <Text style={[styles.label, styles.labelSpaced]}>Formats</Text>
+        {renderChips({
+          items: TEACHING_FORMATS,
+          isActive: (item) => teachingFormats.includes(item),
+          onPress: toggleTeachingFormat,
+        })}
+        <Text style={[styles.label, styles.labelSpaced]}>Niveaux d’élèves</Text>
+        {renderChips({
+          items: STUDENT_LEVEL_GROUPS.map((group) => ({
+            key: group.id,
+            label: group.label,
+            id: group.id,
+          })),
+          isActive: (item) => taughtLevels.includes(item.id),
+          onPress: (item) => toggleTaughtLevel(item.id),
         })}
       </View>
 
-      <Text style={styles.label}>Formats de cours</Text>
-      <View style={styles.chipWrap}>
-        {TEACHING_FORMATS.map((item) => {
-          const active = teachingFormats.includes(item);
-          return (
-            <Pressable
-              key={item}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => toggleTeachingFormat(item)}
-              disabled={saving}
-            >
-              <Text
-                style={[styles.chipLabel, active && styles.chipLabelActive]}
-              >
-                {item}
-              </Text>
-            </Pressable>
-          );
-        })}
+      <Text style={styles.section}>Tarif horaire</Text>
+      <View style={styles.card}>
+        <View style={styles.rateField}>
+          <TextInput
+            style={[styles.input, styles.rateInput]}
+            value={hourlyRate}
+            onChangeText={setHourlyRate}
+            placeholder="25"
+            placeholderTextColor="#8E8E93"
+            keyboardType="decimal-pad"
+            keyboardAppearance="dark"
+            editable={!saving}
+          />
+          <Text style={styles.rateSuffix}>€/h</Text>
+        </View>
       </View>
 
-      <Text style={styles.label}>Ville</Text>
-      <TextInput
-        style={styles.input}
-        value={city}
-        onChangeText={setCity}
-        onBlur={() => {
-          if (city.trim()) applyResolvedLocation(city);
-        }}
-        placeholder="Ex. Ottignies-Louvain-la-Neuve"
-        placeholderTextColor="#7A9185"
-        editable={!saving}
-      />
-      <Text style={styles.label}>Code postal</Text>
-      <TextInput
-        style={styles.input}
-        value={postalCode}
-        onChangeText={setPostalCode}
-        onBlur={() => {
-          if (postalCode.trim()) applyResolvedLocation(postalCode);
-        }}
-        placeholder="Ex. 1348"
-        placeholderTextColor="#7A9185"
-        keyboardType="number-pad"
-        editable={!saving}
-      />
-      <Text style={styles.hintSmall}>Suggestions rapides</Text>
-      <View style={styles.chipWrap}>
-        {BELGIAN_LOCATIONS.slice(0, 5).map((loc) => {
-          const active = city === loc.name;
-          return (
-            <Pressable
-              key={loc.name}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => selectPresetCity(loc)}
-              disabled={saving}
-            >
-              <Text
-                style={[styles.chipLabel, active && styles.chipLabelActive]}
-              >
-                {loc.name}
-              </Text>
-            </Pressable>
-          );
-        })}
+      <Text style={styles.section}>Localisation</Text>
+      <View style={styles.card}>
+        <View style={styles.placeRow}>
+          <View style={styles.placeCity}>
+            <Text style={styles.label}>Ville</Text>
+            <TextInput
+              style={styles.input}
+              value={city}
+              onChangeText={setCity}
+              onBlur={() => {
+                if (city.trim()) applyResolvedLocation(city);
+              }}
+              placeholder="Ex. Louvain-la-Neuve"
+              placeholderTextColor="#8E8E93"
+              keyboardAppearance="dark"
+              editable={!saving}
+            />
+          </View>
+          <View style={styles.placePostal}>
+            <Text style={styles.label}>Code postal</Text>
+            <TextInput
+              style={styles.input}
+              value={postalCode}
+              onChangeText={setPostalCode}
+              onBlur={() => {
+                if (postalCode.trim()) applyResolvedLocation(postalCode);
+              }}
+              placeholder="1348"
+              placeholderTextColor="#8E8E93"
+              keyboardType="number-pad"
+              keyboardAppearance="dark"
+              editable={!saving}
+            />
+          </View>
+        </View>
       </View>
 
-      <Text style={styles.label}>Biographie</Text>
-      <TextInput
-        style={[styles.input, styles.bioInput]}
-        value={bio}
-        onChangeText={setBio}
-        placeholder="Présente-toi en quelques phrases…"
-        placeholderTextColor="#7A9185"
-        multiline
-        textAlignVertical="top"
-        editable={!saving}
-      />
-
-      <Text style={styles.label}>Tarif horaire (€/h)</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.rateRow}
-      >
-        {HOURLY_RATES.map((rate) => {
-          const active = hourlyRate === rate;
-          return (
-            <Pressable
-              key={rate}
-              style={[styles.rateChip, active && styles.rateChipActive]}
-              onPress={() => setHourlyRate(rate)}
-              disabled={saving}
-            >
-              <Text
-                style={[
-                  styles.rateChipLabel,
-                  active && styles.rateChipLabelActive,
-                ]}
-              >
-                {rate} €
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      <Text style={styles.label}>Niveau d’études</Text>
-      <View style={styles.chipWrap}>
-        {STUDY_YEARS.map((year) => {
-          const active = studyYear === year;
-          return (
-            <Pressable
-              key={year}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => setStudyYear(year)}
-              disabled={saving}
-            >
-              <Text
-                style={[styles.chipLabel, active && styles.chipLabelActive]}
-              >
-                {year}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Text style={styles.label}>Niveaux d’élèves</Text>
-      <View style={styles.chipWrap}>
-        {STUDENT_LEVELS.map((level) => {
-          const active = taughtLevels.includes(level);
-          return (
-            <Pressable
-              key={level}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => toggleTaughtLevel(level)}
-              disabled={saving}
-            >
-              <Text
-                style={[styles.chipLabel, active && styles.chipLabelActive]}
-              >
-                {level}
-              </Text>
-            </Pressable>
-          );
+      <Text style={styles.section}>Ton parcours</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Niveau d’études</Text>
+        {renderChips({
+          items: STUDY_YEARS,
+          isActive: (item) => studyYear === item,
+          onPress: setStudyYear,
         })}
       </View>
 
@@ -654,7 +501,7 @@ export default function TutorProfileEditor() {
         {saving ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={styles.saveLabel}>Sauvegarder le profil</Text>
+          <Text style={styles.saveLabel}>Enregistrer l’annonce</Text>
         )}
       </Pressable>
     </View>
@@ -663,172 +510,137 @@ export default function TutorProfileEditor() {
 
 const styles = StyleSheet.create({
   loadingBox: {
-    backgroundColor: '#E8F5EE',
+    backgroundColor: '#1C1C1E',
     borderRadius: 20,
-    padding: 24,
-    borderWidth: 2,
-    borderColor: '#1B5E3B',
-    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    padding: 28,
+    marginTop: 8,
     alignItems: 'center',
     gap: 10,
   },
   loadingText: {
-    color: '#1B5E3B',
+    color: '#A1A1A6',
     fontSize: 14,
+  },
+  section: {
+    marginTop: 22,
+    marginBottom: 8,
+    marginLeft: 4,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8E8E93',
   },
   card: {
-    backgroundColor: '#E8F5EE',
+    backgroundColor: '#1C1C1E',
     borderRadius: 20,
-    padding: 20,
-    borderWidth: 2,
-    borderColor: '#1B5E3B',
-    marginBottom: 24,
-  },
-  eyebrow: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: '#1B5E3B',
-    textTransform: 'uppercase',
-  },
-  hint: {
-    marginTop: 8,
-    marginBottom: 14,
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#3D5C4C',
-  },
-  hintSmall: {
-    marginTop: 6,
-    marginBottom: 6,
-    fontSize: 12,
-    color: '#4A6357',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    padding: 14,
   },
   label: {
-    marginTop: 10,
     marginBottom: 8,
     fontSize: 14,
     fontWeight: '700',
-    color: '#10261C',
+    color: '#E8E8E8',
+  },
+  labelSpaced: {
+    marginTop: 16,
   },
   avatarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    marginBottom: 6,
-  },
-  avatarButton: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    position: 'relative',
+    gap: 16,
   },
   avatarImage: {
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: '#D8F5E9',
+    backgroundColor: '#2C2C2E',
   },
   avatarPlaceholder: {
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: '#D8F5E9',
+    backgroundColor: '#2C2C2E',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
   },
   avatarInitials: {
     fontSize: 26,
     fontWeight: '800',
-    color: '#1B5E3B',
+    color: colors.white,
   },
-  avatarCamBadge: {
+  editPhoto: {
     position: 'absolute',
-    right: 0,
-    bottom: 0,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#1B5E3B',
+    right: -2,
+    bottom: -2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FF5A6A',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderWidth: 3,
+    borderColor: '#1C1C1E',
   },
   avatarActions: {
     flex: 1,
     gap: 8,
+    alignItems: 'flex-start',
   },
-  avatarActionBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#1B5E3B',
+  pill: {
+    backgroundColor: '#2C2C2E',
     borderRadius: 999,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 9,
   },
-  avatarActionBtnPrimary: {
-    backgroundColor: '#1B5E3B',
+  pillPrimary: {
+    backgroundColor: colors.white,
   },
-  avatarActionBtnSecondary: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#1B5E3B',
-  },
-  avatarActionLabel: {
-    color: '#FFFFFF',
-    fontSize: 13,
+  pillLabel: {
+    fontSize: 14,
     fontWeight: '700',
+    color: '#E8E8E8',
   },
-  avatarActionLabelDark: {
-    color: '#1B5E3B',
+  pillLabelPrimary: {
+    color: '#111111',
   },
-  avatarRemoveBtn: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  avatarRemoveLabel: {
-    color: '#7A9185',
+  photoHint: {
     fontSize: 13,
-    fontWeight: '600',
-  },
-  fallbackHint: {
-    marginBottom: 10,
-    fontSize: 12,
     lineHeight: 18,
-    color: '#7A4E00',
-  },
-  urlApplyBtn: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    marginBottom: 4,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#1B5E3B',
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  urlApplyLabel: {
-    color: '#1B5E3B',
-    fontSize: 13,
-    fontWeight: '700',
+    color: '#8E8E93',
   },
   input: {
+    backgroundColor: '#111111',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderColor: '#2A2A2A',
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#10261C',
+    color: colors.white,
   },
   bioInput: {
-    minHeight: 100,
+    minHeight: 134,
     paddingTop: 12,
+  },
+  counter: {
+    marginTop: 8,
+    textAlign: 'right',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  placeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  placeCity: {
+    flex: 1.6,
+  },
+  placePostal: {
+    flex: 1,
   },
   chipWrap: {
     flexDirection: 'row',
@@ -837,66 +649,55 @@ const styles = StyleSheet.create({
   },
   chip: {
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: '#2C2C2E',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
-  chipActive: {
-    backgroundColor: '#1B5E3B',
-    borderColor: '#1B5E3B',
+  chipOn: {
+    backgroundColor: colors.white,
   },
   chipLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1B5E3B',
-  },
-  chipLabelActive: {
-    color: '#FFFFFF',
-  },
-  rateRow: {
-    gap: 8,
-    paddingBottom: 4,
-  },
-  rateChip: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#B7D2C3',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  rateChipActive: {
-    backgroundColor: '#1B5E3B',
-    borderColor: '#1B5E3B',
-  },
-  rateChipLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1B5E3B',
+    color: '#E8E8E8',
   },
-  rateChipLabelActive: {
-    color: '#FFFFFF',
+  chipLabelOn: {
+    color: '#111111',
   },
-  error: {
-    marginTop: 12,
-    color: '#C0392B',
-    fontSize: 14,
-  },
-  saveButton: {
-    marginTop: 18,
-    backgroundColor: '#1B5E3B',
-    borderRadius: 14,
-    paddingVertical: 14,
+  rateField: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
   },
-  disabled: {
-    opacity: 0.7,
+  rateInput: {
+    flex: 1,
   },
-  saveLabel: {
-    color: '#FFFFFF',
+  rateSuffix: {
     fontSize: 16,
     fontWeight: '700',
+    color: '#E8E8E8',
+  },
+  error: {
+    marginTop: 14,
+    marginLeft: 4,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF8A80',
+  },
+  saveButton: {
+    marginTop: 24,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#1B6B45',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+  saveLabel: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '800',
   },
 });

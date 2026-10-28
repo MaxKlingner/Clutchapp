@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,9 +22,10 @@ import { useIsFocused } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 
 import { colors } from '../constants/theme';
-import { fetchUserPlace, saveAccountIdentity } from '../lib/roles';
+import { fetchAccountIdentity, saveAccountIdentity } from '../lib/roles';
+import { setTutorAvatarUrl } from '../lib/supabase';
 
-const GENDERS = ['Homme', 'Femme', 'Autre'];
+const GENDERS = ['Homme', 'Femme', 'Je ne souhaite pas préciser'];
 
 function metaOf(user) {
   const raw = user?.unsafeMetadata;
@@ -40,29 +43,30 @@ export default function AccountScreen() {
   const [birthDate, setBirthDate] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
-  const [password, setPassword] = useState('');
   const [photoUri, setPhotoUri] = useState(null);
   const [baseline, setBaseline] = useState('');
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const hydrated = useRef(false);
 
   const email = user?.primaryEmailAddress?.emailAddress || '';
   const phoneVerified = user?.primaryPhoneNumber?.verification?.status === 'verified';
 
   useEffect(() => {
+    if (!userId || hydrated.current) return undefined;
     let cancelled = false;
     async function load() {
       const meta = metaOf(user);
-      const place = userId ? await fetchUserPlace(userId).catch(() => null) : null;
+      const saved = await fetchAccountIdentity(userId).catch(() => null);
       const storedAddress =
         typeof meta.address === 'string' && meta.address.trim()
           ? meta.address.trim()
-          : [place?.postalCode, place?.city].filter(Boolean).join(' ');
+          : [saved?.postalCode, saved?.city].filter(Boolean).join(' ');
       const next = {
         gender: typeof meta.gender === 'string' ? meta.gender : '',
-        firstName: user?.firstName || '',
-        lastName: user?.lastName || '',
+        firstName: user?.firstName || saved?.firstName || '',
+        lastName: user?.lastName || saved?.lastName || '',
         birthDate: typeof meta.birthDate === 'string' ? meta.birthDate : '',
         phone:
           (typeof meta.phone === 'string' && meta.phone) ||
@@ -71,6 +75,7 @@ export default function AccountScreen() {
         address: storedAddress,
       };
       if (cancelled) return;
+      hydrated.current = true;
       setGender(next.gender);
       setFirstName(next.firstName);
       setLastName(next.lastName);
@@ -80,6 +85,11 @@ export default function AccountScreen() {
       setPhotoUri(user?.imageUrl || null);
       setBaseline(JSON.stringify(next));
       setReady(true);
+      if (user && !user.firstName && next.firstName) {
+        user
+          .update({ firstName: next.firstName, lastName: next.lastName })
+          .catch(() => {});
+      }
     }
     load();
     return () => {
@@ -95,7 +105,7 @@ export default function AccountScreen() {
     phone,
     address,
   });
-  const dirty = ready && (current !== baseline || password.length > 0);
+  const dirty = ready && current !== baseline;
 
   function chooseGender() {
     Alert.alert('Genre', 'Choisis une option.', [
@@ -150,6 +160,8 @@ export default function AccountScreen() {
       const file = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
       await user.setProfileImage({ file });
       await user.reload();
+      setPhotoUri(user.imageUrl || asset.uri);
+      if (userId) await setTutorAvatarUrl(userId, user.imageUrl || null);
     } catch (err) {
       Alert.alert(
         'Photo',
@@ -174,10 +186,6 @@ export default function AccountScreen() {
           address: address.trim(),
         },
       });
-      if (password) {
-        await user.updatePassword({ newPassword: password });
-        setPassword('');
-      }
       if (userId) {
         await saveAccountIdentity({
           clerkId: userId,
@@ -246,9 +254,14 @@ export default function AccountScreen() {
           <Text style={styles.title}>Paramètres</Text>
         </View>
 
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
         <ScrollView
           contentContainerStyle={styles.list}
           keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.hero}>
@@ -336,16 +349,19 @@ export default function AccountScreen() {
           <View style={styles.field}>
             <Text style={styles.lockedValue}>{email || 'E-mail'}</Text>
           </View>
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Mot de passe"
-            placeholderTextColor="#8E8E93"
-            secureTextEntry
-            autoCapitalize="none"
-            keyboardAppearance="dark"
-          />
+          <Pressable
+            style={styles.field}
+            onPress={() => navigation.navigate('ChangePassword')}
+            accessibilityRole="button"
+          >
+            <View style={styles.fieldRow}>
+              <View>
+                <Text style={styles.fieldLabel}>Mot de passe</Text>
+                <Text style={styles.fieldValue}>Changer</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
+            </View>
+          </Pressable>
 
           <Pressable
             style={[styles.save, !dirty && styles.saveOff]}
@@ -367,6 +383,7 @@ export default function AccountScreen() {
             )}
           </Pressable>
         </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
   );
@@ -375,17 +392,19 @@ export default function AccountScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#111111' },
   safe: { flex: 1 },
+  flex: { flex: 1 },
   header: {
+    minHeight: 56,
     paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 2,
+    backgroundColor: '#111111',
   },
   back: {
     position: 'absolute',
     left: 12,
-    top: 4,
+    top: 8,
     width: 40,
     height: 40,
     borderRadius: 20,

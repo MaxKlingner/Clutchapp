@@ -1,149 +1,47 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 
-import { colors, MINT_BAND_H, radii, shadows } from '../constants/theme';
-import { useRole } from '../lib/RoleContext';
-import { ROLES } from '../lib/roles';
-import { fetchTutorDashboard } from '../lib/supabase';
-
-const TIERS = [
-  { id: 'bronze', label: 'Tuteur Bronze', minCourses: 0 },
-  { id: 'silver', label: 'Tuteur Silver', minCourses: 5 },
-  { id: 'gold', label: 'Tuteur Gold', minCourses: 15 },
-  { id: 'top', label: 'Top Tuteur', minCourses: 30 },
-];
-
-function firstName(fullName) {
-  return String(fullName || 'Tuteur').trim().split(/\s+/)[0] || 'Tuteur';
-}
-
-function formatReviewDate(value) {
-  if (!value) return '';
-  try {
-    return new Date(value).toLocaleDateString('fr-FR', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
-  } catch {
-    return '';
-  }
-}
-
-/** Annonce en ligne = au moins une vraie matière (pas le placeholder par défaut). */
-function isAnnouncementActive(profile) {
-  if (!profile) return false;
-  const specialties = (profile.specialties || [])
-    .map((item) => String(item || '').trim())
-    .filter((item) => item && item.toLowerCase() !== 'matière');
-  return specialties.length > 0;
-}
-
-function getStatusBadge({ rating, reviewCount, coursesDone }) {
-  if (coursesDone >= 30 || (rating >= 4.8 && reviewCount >= 8)) {
-    return { label: 'Top Tuteur', tone: 'gold' };
-  }
-  if (reviewCount >= 1 || coursesDone >= 1) {
-    return { label: 'Tuteur Vérifié', tone: 'verified' };
-  }
-  return { label: 'Nouveau Tuteur', tone: 'new' };
-}
-
-function getTierProgress(coursesDone) {
-  let current = TIERS[0];
-  let next = TIERS[1];
-  for (let i = 0; i < TIERS.length; i += 1) {
-    if (coursesDone >= TIERS[i].minCourses) {
-      current = TIERS[i];
-      next = TIERS[i + 1] || null;
-    }
-  }
-
-  if (!next) {
-    return {
-      currentLabel: current.label,
-      remaining: 0,
-      progress: 1,
-      hint: 'Palier max atteint — bravo !',
-    };
-  }
-
-  const span = next.minCourses - current.minCourses;
-  const done = coursesDone - current.minCourses;
-  const remaining = Math.max(0, next.minCourses - coursesDone);
-  const progress = span > 0 ? Math.min(1, done / span) : 1;
-
-  return {
-    currentLabel: current.label,
-    remaining,
-    progress,
-    hint:
-      remaining === 1
-        ? `Prochain palier dans 1 cours`
-        : `Prochain palier dans ${remaining} cours`,
-  };
-}
-
-function Stars({ rating }) {
-  const value = Math.round(Number(rating) || 0);
-  return (
-    <View style={styles.starsRow}>
-      {[1, 2, 3, 4, 5].map((star) => (
-        <Ionicons
-          key={star}
-          name={star <= value ? 'star' : 'star-outline'}
-          size={14}
-          color={star <= value ? colors.star : '#C5D0C9'}
-        />
-      ))}
-    </View>
-  );
-}
+import TutorDiscoverCard from '../components/TutorDiscoverCard';
+import { colors } from '../constants/theme';
+import { hasPublishedAnnouncement } from '../lib/tutorAnnouncement';
+import { ensureTutorProfile, resetMyTutorAnnouncement } from '../lib/supabase';
 
 export default function TutorHomeScreen() {
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
+  const { height: windowHeight } = useWindowDimensions();
+  const tightScreen = windowHeight < 700;
   const { userId } = useAuth();
   const { user } = useUser();
-  const { role } = useRole();
-
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [dashboard, setDashboard] = useState(null);
-
-  const isTutor = role === ROLES.TUTOR;
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+  const [profile, setProfile] = useState(null);
 
   useFocusEffect(
     useCallback(() => {
-      if (!isTutor) return undefined;
-
       let cancelled = false;
       async function load() {
         if (!userId) return;
-        setLoading(true);
-        setError(null);
+        setError('');
         try {
-          const data = await fetchTutorDashboard(
-            userId,
-            user?.fullName ||
-              [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
-              null
-          );
-          if (!cancelled) setDashboard(data);
+          const next = await ensureTutorProfile({ clerkId: userId });
+          if (!cancelled) setProfile(next);
         } catch (err) {
-          if (!cancelled) {
-            setError(err?.message ?? 'Impossible de charger le tableau de bord.');
-          }
+          if (!cancelled) setError(err?.message ?? 'Impossible de charger ton annonce.');
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -152,584 +50,210 @@ export default function TutorHomeScreen() {
       return () => {
         cancelled = true;
       };
-    }, [userId, isTutor, user?.fullName, user?.firstName, user?.lastName])
+    }, [userId])
   );
 
-  const displayName =
-    dashboard?.profile?.name ||
-    user?.fullName ||
-    user?.firstName ||
-    'Tuteur';
+  const published = hasPublishedAnnouncement(profile);
+  const tutor = profile
+    ? {
+        ...profile,
+        avatarUrl: user?.imageUrl || profile.avatarUrl,
+        name:
+          profile.name && profile.name !== 'Tuteur'
+            ? profile.name
+            : user?.firstName || user?.fullName || profile.name,
+      }
+    : null;
 
-  const coursesDone = dashboard?.coursesDone ?? 0;
-  const announcementActive = isAnnouncementActive(dashboard?.profile);
-  const badge = useMemo(
-    () =>
-      getStatusBadge({
-        rating: dashboard?.rating ?? 0,
-        reviewCount: dashboard?.reviewCount ?? 0,
-        coursesDone,
-      }),
-    [dashboard?.rating, dashboard?.reviewCount, coursesDone]
-  );
-  const tier = useMemo(() => getTierProgress(coursesDone), [coursesDone]);
+  function openEditor() {
+    navigation.navigate('EditTutorAnnouncement');
+  }
 
-  if (!isTutor) {
-    return (
-      <View style={styles.root}>
-        <SafeAreaView style={styles.safe} edges={['top']}>
-          <View style={styles.centered}>
-            <Text style={styles.emptyTitle}>Espace tuteur</Text>
-            <Text style={styles.emptyText}>
-              Cet écran est réservé aux comptes tuteur.
-            </Text>
-          </View>
-        </SafeAreaView>
-      </View>
+  function confirmDelete() {
+    if (deleting) return;
+    Alert.alert(
+      'Supprimer l’annonce',
+      'Elle disparaîtra de Découvrir. Tu pourras en recréer une plus tard.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Supprimer', style: 'destructive', onPress: onDelete },
+      ]
     );
+  }
+
+  async function onDelete() {
+    if (!userId || deleting) return;
+    setDeleting(true);
+    try {
+      const next = await resetMyTutorAnnouncement(userId);
+      setProfile(next);
+    } catch (err) {
+      Alert.alert('Annonce', err?.message ?? 'Impossible de supprimer l’annonce.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
     <View style={styles.root}>
-      <View style={[styles.mintBand, { height: MINT_BAND_H }]} />
-
+      {isFocused ? <StatusBar style="light" /> : null}
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.container}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.topBar}>
-            <View style={styles.topBarText}>
-              <Text style={styles.hello}>Bonjour</Text>
-              <Text style={styles.name} numberOfLines={1}>
-                {firstName(displayName)}
-              </Text>
+        <View style={styles.header}>
+          <Text style={styles.title}>Annonce</Text>
+          <Text style={styles.subtitle}>
+            {loading
+              ? 'Chargement…'
+              : published
+                ? 'Comme les parents la voient dans Découvrir'
+                : 'Pas encore publiée'}
+          </Text>
+        </View>
+
+        {loading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color="#C7C7CC" />
+          </View>
+        ) : error ? (
+          <View style={styles.centered}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : !published ? (
+          <View style={styles.centered}>
+            <Pressable
+              style={styles.createButton}
+              onPress={openEditor}
+              accessibilityLabel="Créer mon annonce"
+            >
+              <Ionicons name="add" size={44} color={colors.white} />
+            </Pressable>
+            <Text style={styles.createTitle}>Créer mon annonce</Text>
+            <Text style={styles.createText}>
+              Publie ton profil pour apparaître aux parents dans Découvrir.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.stage}>
+            <View style={styles.cardWrap}>
+              <TutorDiscoverCard tutor={tutor} tightScreen={tightScreen} />
             </View>
-            <View style={styles.topBarActions}>
+            <View style={styles.actions}>
               <Pressable
-                style={styles.headerIconButton}
-                onPress={() => navigation.navigate('Settings')}
-                accessibilityLabel="Réglages"
-                hitSlop={8}
+                style={styles.editButton}
+                onPress={openEditor}
+                accessibilityLabel="Modifier l’annonce"
               >
-                <Ionicons
-                  name="settings-outline"
-                  size={22}
-                  color={colors.white}
-                />
+                <Text style={styles.editLabel}>Modifier</Text>
+              </Pressable>
+              <Pressable
+                style={styles.deleteButton}
+                onPress={confirmDelete}
+                disabled={deleting}
+                accessibilityLabel="Supprimer l’annonce"
+              >
+                {deleting ? (
+                  <ActivityIndicator color="#FF8A80" />
+                ) : (
+                  <Text style={styles.deleteLabel}>Supprimer</Text>
+                )}
               </Pressable>
             </View>
           </View>
-
-          {loading ? (
-            <View style={styles.centered}>
-              <ActivityIndicator size="large" color={colors.mintDeep} />
-              <Text style={styles.loadingText}>Chargement de ton espace…</Text>
-            </View>
-          ) : error ? (
-            <View style={styles.centered}>
-              <Text style={styles.emptyTitle}>Oups</Text>
-              <Text style={styles.emptyText}>{error}</Text>
-            </View>
-          ) : (
-            <>
-              <Pressable
-                style={[
-                  styles.ctaCard,
-                  announcementActive ? styles.ctaCardEdit : styles.ctaCardCreate,
-                ]}
-                onPress={() => navigation.navigate('EditTutorProfile')}
-                accessibilityLabel={
-                  announcementActive
-                    ? 'Modifier mon annonce'
-                    : 'Créer mon annonce'
-                }
-              >
-                <View
-                  style={[
-                    styles.ctaIconWrap,
-                    announcementActive
-                      ? styles.ctaIconWrapEdit
-                      : styles.ctaIconWrapCreate,
-                  ]}
-                >
-                  <Ionicons
-                    name={announcementActive ? 'create-outline' : 'add'}
-                    size={22}
-                    color={
-                      announcementActive ? colors.mintDeep : colors.white
-                    }
-                  />
-                </View>
-                <View style={styles.ctaTextWrap}>
-                  <Text
-                    style={[
-                      styles.ctaTitle,
-                      !announcementActive && styles.ctaTitleOnDark,
-                    ]}
-                  >
-                    {announcementActive
-                      ? 'Modifier mon annonce'
-                      : 'Créer mon annonce'}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.ctaSubtitle,
-                      !announcementActive && styles.ctaSubtitleOnDark,
-                    ]}
-                  >
-                    {announcementActive
-                      ? 'Tarifs, matières, bio et disponibilités'
-                      : 'Publie ton profil pour apparaître aux parents'}
-                  </Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={20}
-                  color={
-                    announcementActive ? colors.mintDeep : colors.white
-                  }
-                />
-              </Pressable>
-
-              <Text style={styles.sectionTitle}>Mes Performances</Text>
-              <View style={styles.statsGrid}>
-                <View style={styles.statCard}>
-                  <Text style={styles.statValue}>
-                    {(dashboard?.rating || 0) > 0
-                      ? dashboard.rating.toFixed(1)
-                      : '—'}
-                  </Text>
-                  <Text style={styles.statLabel}>Note globale ★</Text>
-                </View>
-                <View style={styles.statCard}>
-                  <Text style={styles.statValue}>{coursesDone}</Text>
-                  <Text style={styles.statLabel}>Cours dispensés</Text>
-                </View>
-                <View style={[styles.statCard, styles.statCardWide]}>
-                  <Text style={styles.statValue}>
-                    {dashboard?.hoursTaught ?? 0} h
-                  </Text>
-                  <Text style={styles.statLabel}>Heures d’enseignement</Text>
-                </View>
-              </View>
-
-              <View style={styles.progressCard}>
-                <View style={styles.progressHeader}>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      badge.tone === 'gold' && styles.statusBadgeGold,
-                      badge.tone === 'new' && styles.statusBadgeNew,
-                    ]}
-                  >
-                    <Ionicons
-                      name={
-                        badge.tone === 'gold'
-                          ? 'trophy'
-                          : badge.tone === 'verified'
-                            ? 'shield-checkmark'
-                            : 'leaf'
-                      }
-                      size={13}
-                      color={
-                        badge.tone === 'gold'
-                          ? '#7A4E00'
-                          : badge.tone === 'new'
-                            ? '#4338CA'
-                            : colors.mintDeep
-                      }
-                    />
-                    <Text
-                      style={[
-                        styles.statusBadgeLabel,
-                        badge.tone === 'gold' && styles.statusBadgeLabelGold,
-                        badge.tone === 'new' && styles.statusBadgeLabelNew,
-                      ]}
-                    >
-                      {badge.label}
-                    </Text>
-                  </View>
-                  <Text style={styles.progressCurrent}>{tier.currentLabel}</Text>
-                </View>
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${Math.round(tier.progress * 100)}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.progressHint}>{tier.hint}</Text>
-              </View>
-
-              <Text style={styles.sectionTitle}>Derniers avis reçus</Text>
-              {(dashboard?.reviews?.length || 0) === 0 ? (
-                <View style={styles.emptyReviews}>
-                  <Text style={styles.emptyReviewsText}>
-                    Pas encore d’avis. Tes premiers retours apparaîtront ici
-                    après tes cours.
-                  </Text>
-                </View>
-              ) : (
-                dashboard.reviews.map((review) => (
-                  <View key={review.id} style={styles.reviewCard}>
-                    <View style={styles.reviewHeader}>
-                      <Text style={styles.reviewName}>
-                        {review.reviewerFirstName}
-                      </Text>
-                      <Text style={styles.reviewDate}>
-                        {formatReviewDate(review.createdAt)}
-                      </Text>
-                    </View>
-                    <Stars rating={review.rating} />
-                    {review.comment ? (
-                      <Text style={styles.reviewComment}>{review.comment}</Text>
-                    ) : (
-                      <Text style={styles.reviewCommentMuted}>
-                        Sans commentaire
-                      </Text>
-                    )}
-                  </View>
-                ))
-              )}
-            </>
-          )}
-        </ScrollView>
+        )}
       </SafeAreaView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.page,
-  },
-  mintBand: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: colors.mint,
-  },
-  safe: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-  scroll: {
-    flex: 1,
-  },
-  container: {
+  root: { flex: 1, backgroundColor: '#111111' },
+  safe: { flex: 1 },
+  header: {
     paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 36,
-  },
-  topBar: {
-    flexDirection: 'row',
+    paddingBottom: 14,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 18,
-    minHeight: 52,
   },
-  topBarText: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  hello: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.82)',
-  },
-  name: {
-    marginTop: 2,
+  title: {
+    textAlign: 'center',
     fontSize: 28,
     fontWeight: '800',
     color: colors.white,
   },
-  topBarActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  headerIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.38)',
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 42, 31, 0.45)',
-  },
-  modalCard: {
-    backgroundColor: colors.card,
-    borderRadius: radii.card,
-    paddingHorizontal: 22,
-    paddingTop: 24,
-    paddingBottom: 20,
-    zIndex: 1,
-    ...shadows.card,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.ink,
-    marginBottom: 16,
+  subtitle: {
+    marginTop: 4,
     textAlign: 'center',
-  },
-  modalSectionLabel: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    color: colors.mintDeep,
-    textTransform: 'uppercase',
-    marginBottom: 6,
-  },
-  modalBody: {
     fontSize: 15,
-    lineHeight: 22,
-    color: colors.muted,
-    marginBottom: 14,
-  },
-  modalCloseButton: {
-    marginTop: 6,
-    backgroundColor: colors.mintDeep,
-    borderRadius: 14,
-    paddingVertical: 13,
-    alignItems: 'center',
-  },
-  modalCloseLabel: {
-    color: colors.white,
-    fontSize: 16,
-    fontWeight: '700',
+    color: '#A1A1A6',
   },
   centered: {
-    minHeight: 220,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 32,
+    paddingBottom: 60,
   },
-  loadingText: {
-    color: colors.muted,
-    fontSize: 14,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  emptyText: {
+  errorText: {
     textAlign: 'center',
-    color: colors.muted,
     fontSize: 15,
     lineHeight: 22,
+    color: '#FF8A80',
   },
-  ctaCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    borderRadius: radii.card,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-    marginBottom: 24,
-    ...shadows.card,
-  },
-  ctaCardCreate: {
-    backgroundColor: colors.mintDeep,
-  },
-  ctaCardEdit: {
-    backgroundColor: colors.card,
-  },
-  ctaIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  createButton: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: '#1B6B45',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ctaIconWrapCreate: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  ctaIconWrapEdit: {
-    backgroundColor: colors.badgeMint,
-  },
-  ctaTextWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  ctaTitle: {
-    fontSize: 16,
+  createTitle: {
+    marginTop: 18,
+    fontSize: 20,
     fontWeight: '800',
-    color: colors.ink,
-  },
-  ctaTitleOnDark: {
     color: colors.white,
   },
-  ctaSubtitle: {
-    marginTop: 3,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-    color: colors.muted,
-  },
-  ctaSubtitleOnDark: {
-    color: 'rgba(255,255,255,0.78)',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.ink,
-    marginBottom: 12,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 12,
-  },
-  statCard: {
-    width: '48%',
-    flexGrow: 1,
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 14,
-    ...shadows.soft,
-  },
-  statCardWide: {
-    width: '100%',
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.mintDeep,
-  },
-  statLabel: {
-    marginTop: 4,
-    fontSize: 13,
-    color: colors.muted,
-    fontWeight: '600',
-  },
-  progressCard: {
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 24,
-    ...shadows.soft,
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: 12,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.badgeMint,
-    borderRadius: radii.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  statusBadgeGold: {
-    backgroundColor: '#FFF4D6',
-  },
-  statusBadgeNew: {
-    backgroundColor: '#EEF2FF',
-  },
-  statusBadgeLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.mintDeep,
-  },
-  statusBadgeLabelGold: {
-    color: '#7A4E00',
-  },
-  statusBadgeLabelNew: {
-    color: '#4338CA',
-  },
-  progressCurrent: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.muted,
-  },
-  progressTrack: {
-    height: 10,
-    borderRadius: radii.pill,
-    backgroundColor: '#E8F0EB',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: radii.pill,
-    backgroundColor: colors.mintDeep,
-  },
-  progressHint: {
-    marginTop: 10,
-    fontSize: 13,
-    color: colors.muted,
-    fontWeight: '600',
-  },
-  emptyReviews: {
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 18,
-    ...shadows.soft,
-  },
-  emptyReviewsText: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: colors.muted,
-  },
-  reviewCard: {
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 10,
-    ...shadows.soft,
-  },
-  reviewHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  reviewName: {
+  createText: {
+    marginTop: 6,
+    textAlign: 'center',
     fontSize: 15,
+    lineHeight: 22,
+    color: '#A1A1A6',
+  },
+  stage: {
+    flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  cardWrap: {
+    flex: 1,
+    minHeight: 0,
+  },
+  actions: {
+    flexShrink: 0,
+    paddingTop: 14,
+    gap: 8,
+  },
+  editButton: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: '#1B6B45',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editLabel: {
+    color: colors.white,
+    fontSize: 16,
     fontWeight: '800',
-    color: colors.ink,
   },
-  reviewDate: {
-    fontSize: 12,
-    color: colors.mutedSoft,
+  deleteButton: {
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  starsRow: {
-    flexDirection: 'row',
-    gap: 2,
-    marginBottom: 8,
-  },
-  reviewComment: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: colors.muted,
-  },
-  reviewCommentMuted: {
-    fontSize: 13,
-    fontStyle: 'italic',
-    color: '#9AA8A0',
+  deleteLabel: {
+    color: '#FF8A80',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

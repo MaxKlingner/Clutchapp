@@ -57,7 +57,7 @@ function formatChipLabel(filters) {
   return 'Format';
 }
 
-export default function TutorRefineBar({ filters }) {
+export default function TutorRefineBar({ filters, floating = false }) {
   const [sheet, setSheet] = useState(null);
   const [formatDraft, setFormatDraft] = useState([]);
   const [priceDraft, setPriceDraft] = useState(null);
@@ -151,6 +151,11 @@ export default function TutorRefineBar({ filters }) {
     );
   }
 
+  const light = floating;
+  const sliderColors = light
+    ? { accent: '#111111', trackColor: '#E5E5EA', thumbBorder: '#111111', labelColor: '#6E6E73' }
+    : { accent: '#FFFFFF', trackColor: '#3A3A3C', thumbBorder: '#111111', labelColor: '#A1A1A6' };
+
   const chips = [
     {
       key: 'format',
@@ -158,14 +163,14 @@ export default function TutorRefineBar({ filters }) {
       active: filters.formatFilters.length > 0,
     },
     {
-      key: 'price',
-      label: filters.maxHourlyRate != null ? `${filters.maxHourlyRate} €/h` : 'Tarif',
-      active: filters.maxHourlyRate != null,
-    },
-    {
       key: 'level',
       label: levelChipLabel(filters.studentLevelGroups),
       active: (filters.studentLevelGroups || []).length > 0,
+    },
+    {
+      key: 'price',
+      label: filters.maxHourlyRate != null ? `${filters.maxHourlyRate} €/h` : 'Tarif',
+      active: filters.maxHourlyRate != null,
     },
     {
       key: 'distance',
@@ -180,11 +185,19 @@ export default function TutorRefineBar({ filters }) {
         {chips.map((chip) => (
           <Pressable
             key={chip.key}
-            style={[styles.chip, chip.active && styles.chipOn]}
+            style={[
+              styles.chip,
+              floating && styles.chipFloating,
+              chip.active && (floating ? styles.chipFloatingOn : styles.chipOn),
+            ]}
             onPress={() => open(chip.key)}
           >
             <Text
-              style={[styles.chipLabel, chip.active && styles.chipLabelOn]}
+              style={[
+                styles.chipLabel,
+                floating && styles.chipLabelFloating,
+                chip.active && (floating ? styles.chipLabelFloatingOn : styles.chipLabelOn),
+              ]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.75}
@@ -202,14 +215,20 @@ export default function TutorRefineBar({ filters }) {
         onRequestClose={close}
       >
         <View style={styles.modalRoot}>
-          <Pressable style={styles.backdrop} onPress={close} />
+          <Pressable style={[styles.backdrop, light && lightStyles.backdrop]} onPress={close} />
           <Animated.View
-            style={[styles.sheet, { transform: [{ translateY: dragY }] }]}
+            style={[
+              styles.sheet,
+              light && lightStyles.sheet,
+              { transform: [{ translateY: dragY }] },
+            ]}
             {...sheetPan.panHandlers}
           >
           <SafeAreaView edges={['bottom']}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>{SHEETS[sheet] || ''}</Text>
+            <View style={[styles.handle, light && lightStyles.handle]} />
+            <Text style={[styles.sheetTitle, light && lightStyles.ink]}>
+              {SHEETS[sheet] || ''}
+            </Text>
 
             <ScrollView
               style={styles.body}
@@ -224,17 +243,18 @@ export default function TutorRefineBar({ filters }) {
                     label={choice.label}
                     active={formatDraft.includes(choice.value)}
                     onPress={() => toggleFormat(choice.value)}
+                    light={light}
                   />
                 ))
               ) : null}
 
               {sheet === 'price' ? (
                 <>
-                  <Text style={styles.hint}>
+                  <Text style={[styles.hint, light && lightStyles.muted]}>
                     Déplace le curseur pour choisir le tarif horaire maximum.
                   </Text>
-                  <View style={styles.valuePill}>
-                    <Text style={styles.valuePillText}>
+                  <View style={[styles.valuePill, light && lightStyles.valuePill]}>
+                    <Text style={[styles.valuePillText, light && lightStyles.ink]}>
                       {priceDraft == null ? 'Tout' : `${priceDraft} €/h`}
                     </Text>
                   </View>
@@ -245,17 +265,14 @@ export default function TutorRefineBar({ filters }) {
                     caption={null}
                     minLabel="15 €"
                     maxLabel="Tout"
-                    accent="#FFFFFF"
-                    trackColor="#3A3A3C"
-                    thumbBorder="#111111"
-                    labelColor="#A1A1A6"
+                    {...sliderColors}
                   />
                 </>
               ) : null}
 
               {sheet === 'level' ? (
                 <>
-                  <Text style={styles.hint}>
+                  <Text style={[styles.hint, light && lightStyles.muted]}>
                     Choisis le niveau de l’élève.
                   </Text>
                   {STUDENT_LEVEL_GROUPS.map((group) => (
@@ -264,6 +281,7 @@ export default function TutorRefineBar({ filters }) {
                       label={group.label}
                       active={levelDraft.includes(group.id)}
                       onPress={() => toggleLevel(group.id)}
+                      light={light}
                     />
                   ))}
                 </>
@@ -271,11 +289,11 @@ export default function TutorRefineBar({ filters }) {
 
               {sheet === 'distance' ? (
                 <>
-                  <Text style={styles.hint}>
+                  <Text style={[styles.hint, light && lightStyles.muted]}>
                     Déplace le curseur pour limiter la distance.
                   </Text>
-                  <View style={styles.valuePill}>
-                    <Text style={styles.valuePillText}>
+                  <View style={[styles.valuePill, light && lightStyles.valuePill]}>
+                    <Text style={[styles.valuePillText, light && lightStyles.ink]}>
                       {distanceDraft == null ? 'Illimité' : `${distanceDraft} km`}
                     </Text>
                   </View>
@@ -286,21 +304,18 @@ export default function TutorRefineBar({ filters }) {
                     caption={null}
                     minLabel="5 km"
                     maxLabel="Illimité"
-                    accent="#FFFFFF"
-                    trackColor="#3A3A3C"
-                    thumbBorder="#111111"
-                    labelColor="#A1A1A6"
+                    {...sliderColors}
                   />
                 </>
               ) : null}
 
             </ScrollView>
 
-            <Pressable style={styles.save} onPress={save}>
-              <Text style={styles.saveLabel}>Enregistrer</Text>
+            <Pressable style={[styles.save, light && lightStyles.save]} onPress={save}>
+              <Text style={[styles.saveLabel, light && lightStyles.saveLabel]}>Enregistrer</Text>
             </Pressable>
-            <Pressable style={styles.clear} onPress={clearSheet}>
-              <Text style={styles.clearLabel}>Effacer</Text>
+            <Pressable style={[styles.clear, light && lightStyles.clear]} onPress={clearSheet}>
+              <Text style={[styles.clearLabel, light && lightStyles.ink]}>Effacer</Text>
             </Pressable>
           </SafeAreaView>
           </Animated.View>
@@ -310,16 +325,31 @@ export default function TutorRefineBar({ filters }) {
   );
 }
 
-function ChoiceRow({ label, active, onPress }) {
+function ChoiceRow({ label, active, onPress, light = false }) {
   return (
     <Pressable style={styles.choice} onPress={onPress}>
-      <Text style={styles.choiceLabel}>{label}</Text>
-      <View style={[styles.box, active && styles.boxOn]}>
-        {active ? <Ionicons name="checkmark" size={16} color="#111111" /> : null}
+      <Text style={[styles.choiceLabel, light && lightStyles.ink]}>{label}</Text>
+      <View style={[styles.box, active && (light ? lightStyles.boxOn : styles.boxOn)]}>
+        {active ? (
+          <Ionicons name="checkmark" size={16} color={light ? colors.white : '#111111'} />
+        ) : null}
       </View>
     </Pressable>
   );
 }
+
+const lightStyles = StyleSheet.create({
+  backdrop: { backgroundColor: 'rgba(0, 0, 0, 0.3)' },
+  sheet: { backgroundColor: colors.white },
+  handle: { backgroundColor: '#D1D1D6' },
+  ink: { color: '#111111' },
+  muted: { color: '#6E6E73' },
+  valuePill: { borderColor: '#D1D1D6' },
+  boxOn: { backgroundColor: '#111111', borderColor: '#111111' },
+  save: { backgroundColor: '#111111' },
+  saveLabel: { color: colors.white },
+  clear: { backgroundColor: '#F2F2F7' },
+});
 
 const styles = StyleSheet.create({
   chips: {
@@ -340,6 +370,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
+  },
+  chipFloating: {
+    backgroundColor: colors.white,
+    borderColor: colors.white,
+    shadowColor: '#000000',
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  chipFloatingOn: {
+    backgroundColor: '#111111',
+    borderColor: '#111111',
+  },
+  chipLabelFloating: {
+    color: '#111111',
+  },
+  chipLabelFloatingOn: {
+    color: colors.white,
   },
   chipOn: {
     backgroundColor: colors.white,

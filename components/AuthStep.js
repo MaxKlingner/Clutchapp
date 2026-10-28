@@ -33,6 +33,7 @@ export default function AuthStep({
   secondValue,
   onSecondChangeText,
   secondPlaceholder,
+  secondSecureTextEntry = false,
   options,
   selected,
   onSelect,
@@ -214,6 +215,7 @@ export default function AuthStep({
                 autoComplete="off"
                 textContentType="none"
                 importantForAutofill="no"
+                secureTextEntry={secondSecureTextEntry}
                 keyboardAppearance="dark"
                 placeholder={secondPlaceholder}
                 placeholderTextColor="rgba(255,255,255,0.38)"

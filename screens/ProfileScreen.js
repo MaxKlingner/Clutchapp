@@ -107,10 +107,6 @@ export default function ProfileScreen() {
     );
   }
 
-  function onEditAnnouncement() {
-    navigation.navigate('EditTutorProfile');
-  }
-
   function onContact() {
     Linking.openURL('mailto:support@clutch.education').catch(() => {
       Alert.alert('Contact', 'Écris-nous à support@clutch.education');
@@ -200,13 +196,6 @@ export default function ProfileScreen() {
               onPress={onSwitchRole}
               busy={switching}
             />
-            {isParent ? null : (
-              <Row
-                icon="create-outline"
-                label="Modifier mon annonce"
-                onPress={onEditAnnouncement}
-              />
-            )}
             <Row icon="mail-outline" label="Contacter Clutch" onPress={onContact} last />
           </View>
 

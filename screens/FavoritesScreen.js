@@ -10,12 +10,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 
-import TutorProfileDetail from '../components/TutorProfileDetail';
+import { openTutorProfile } from '../components/TutorProfileDetail';
 import { colors, radii } from '../constants/theme';
 import { fetchFavoriteTutors, removeFavoriteTutor } from '../lib/supabase';
 
@@ -47,13 +47,13 @@ function subjectsOf(tutor) {
 
 export default function FavoritesScreen() {
   const isFocused = useIsFocused();
+  const navigation = useNavigation();
   const { userId } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [removingId, setRemovingId] = useState(null);
-  const [opened, setOpened] = useState(null);
 
   async function loadFavorites({ soft = false } = {}) {
     if (!userId) {
@@ -93,7 +93,6 @@ export default function FavoritesScreen() {
     setError(null);
     const previous = items;
     setItems((prev) => prev.filter((row) => row.tutorId !== tutorId));
-    if (opened?.id === tutorId) setOpened(null);
     try {
       await removeFavoriteTutor(userId, tutorId);
     } catch (err) {
@@ -135,7 +134,11 @@ export default function FavoritesScreen() {
           </View>
         ) : (
           <ScrollView
-            contentContainerStyle={styles.list}
+            style={styles.scroll}
+            contentContainerStyle={[
+              styles.list,
+              items.length === 0 && styles.emptyList,
+            ]}
             showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl
@@ -178,7 +181,7 @@ export default function FavoritesScreen() {
                   <Pressable
                     key={row.id}
                     style={styles.card}
-                    onPress={() => setOpened(tutor)}
+                    onPress={() => openTutorProfile(navigation, { tutor })}
                     accessibilityLabel={`Voir le profil de ${firstName(tutor.name)}`}
                   >
                     <View style={styles.avatar}>
@@ -228,14 +231,6 @@ export default function FavoritesScreen() {
           </ScrollView>
         )}
       </SafeAreaView>
-      <TutorProfileDetail
-        tutor={opened}
-        visible={Boolean(opened)}
-        onClose={() => {
-          setOpened(null);
-          loadFavorites({ soft: true });
-        }}
-      />
     </View>
   );
 }
@@ -269,6 +264,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 28,
     gap: 12,
+  },
+  scroll: {
+    flex: 1,
+  },
+  emptyList: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 40,
   },
   stateCard: {
     marginHorizontal: 20,

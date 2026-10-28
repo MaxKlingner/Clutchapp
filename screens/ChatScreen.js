@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,12 +14,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@clerk/clerk-expo';
 
-import TutorProfileDetail from '../components/TutorProfileDetail';
+import { openTutorProfile } from '../components/TutorProfileDetail';
 import { useRole } from '../lib/RoleContext';
 import { ROLES } from '../lib/roles';
 import { MATCH_STATUS } from '../lib/tutorConstants';
@@ -33,6 +34,7 @@ import {
   payPaymentRequest,
   sendMessage,
   sendPaymentRequest,
+  startTutorConversation,
   submitReview,
   subscribeToMatchMessages,
 } from '../lib/supabase';
@@ -78,11 +80,18 @@ function getInitials(name) {
 
 export default function ChatScreen({ navigation, route }) {
   const match = route?.params?.match ?? null;
+  const insets = useSafeAreaInsets();
   const { userId } = useAuth();
   const { role } = useRole();
   const listRef = useRef(null);
+  const inputRef = useRef(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const inTutorSession = Boolean(
+    navigation.getState?.()?.routeNames?.includes('TutorProfile')
+  );
   const [messages, setMessages] = useState([]);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(String(route?.params?.initialDraft || ''));
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [payingId, setPayingId] = useState(null);
@@ -100,26 +109,29 @@ export default function ChatScreen({ navigation, route }) {
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
 
   const isTutor = role === ROLES.TUTOR;
-  const isPending = matchStatus === MATCH_STATUS.PENDING;
+  const tutorProfile = match?.tutor || route?.params?.tutor || null;
+  const isDraft = !match?.id;
+  const isPending = !isDraft && matchStatus === MATCH_STATUS.PENDING;
   const tutorCanWrite = isTutor ? !isPending : true;
   const senderRole = isTutor ? 'tutor' : 'parent';
   const title = isTutor
     ? match?.parentName || 'Parent'
-    : match?.tutor?.name || 'Tuteur';
-  const headerAvatar = isTutor ? null : match?.tutor?.avatarUrl || null;
-  const canOpenProfile = !isTutor && Boolean(match?.tutor?.id);
+    : tutorProfile?.name || 'Tuteur';
+  const headerAvatar = isTutor ? null : tutorProfile?.avatarUrl || null;
+  const canOpenProfile = !isTutor && Boolean(tutorProfile?.id);
   const subtitle = isTutor
     ? isPending
       ? 'Demande en attente de ta réponse'
       : 'Conversation avec le parent'
-    : isPending
-      ? 'Demande envoyée — en attente du tuteur'
-      : match?.tutor?.subject || 'Conversation';
-  const hourlyRate = Number(match?.tutor?.hourlyRate) || 25;
-  const tutorClerkId = match?.tutor?.clerkId || null;
+    : isDraft
+      ? tutorProfile?.subject || 'Nouveau message'
+      : isPending
+        ? 'Demande envoyée — en attente du tuteur'
+        : tutorProfile?.subject || 'Conversation';
+  const hourlyRate = Number(tutorProfile?.hourlyRate) || 25;
+  const tutorClerkId = tutorProfile?.clerkId || null;
 
   useEffect(() => {
     setMatchStatus(match?.status || MATCH_STATUS.PENDING);
@@ -141,10 +153,48 @@ export default function ChatScreen({ navigation, route }) {
   }, []);
 
   useEffect(() => {
+    const nextDraft = String(route?.params?.initialDraft || '');
+    if (nextDraft) setDraft(nextDraft);
+    if (!nextDraft && !route?.params?.focusComposer) return undefined;
+    const focus = () => inputRef.current?.focus();
+    const unsub = navigation.addListener('transitionEnd', focus);
+    const id = setTimeout(focus, 500);
+    return () => {
+      unsub();
+      clearTimeout(id);
+    };
+  }, [navigation, route?.params?.initialDraft, route?.params?.focusComposer]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (event) => {
+        setKeyboardOpen(true);
+        setKeyboardHeight(event?.endCoordinates?.height ?? 0);
+      }
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardOpen(false);
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadHistory() {
-      if (!match?.id) return;
+      if (!match?.id) {
+        setMessages([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
@@ -195,8 +245,8 @@ export default function ChatScreen({ navigation, route }) {
   }, [loading, messages.length, scrollToEnd]);
 
   async function onSend() {
-    if (!userId || sending || !draft.trim() || !match?.id) return;
-    if (isTutor && isPending) return;
+    if (!userId || sending || !draft.trim()) return;
+    if (isTutor && (isPending || isDraft)) return;
 
     const content = draft.trim();
     setDraft('');
@@ -204,6 +254,28 @@ export default function ChatScreen({ navigation, route }) {
     setError(null);
 
     try {
+      if (isDraft) {
+        const tutorId = tutorProfile?.id;
+        if (!tutorId) {
+          throw new Error('Tuteur introuvable.');
+        }
+        const { match: createdMatch, message } = await startTutorConversation({
+          parentId: userId,
+          tutorId,
+          content,
+          senderId: userId,
+        });
+        navigation.setParams({
+          match: createdMatch,
+          tutor: createdMatch.tutor || tutorProfile,
+          initialDraft: '',
+        });
+        setMatchStatus(createdMatch.status || MATCH_STATUS.PENDING);
+        setMessages((prev) => appendUnique(prev, message));
+        scrollToEnd();
+        return;
+      }
+
       const created = await sendMessage({
         matchId: match.id,
         senderId: userId,
@@ -574,11 +646,6 @@ export default function ChatScreen({ navigation, route }) {
     <View style={styles.root}>
       <StatusBar style="light" />
       <SafeAreaView style={styles.safe} edges={['top']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={8}
-      >
         <View style={styles.header}>
           <Pressable
             style={styles.backButton}
@@ -591,7 +658,11 @@ export default function ChatScreen({ navigation, route }) {
           <Pressable
             style={styles.headerAvatar}
             onPress={() => {
-              if (canOpenProfile) setProfileOpen(true);
+              if (!canOpenProfile || !tutorProfile) return;
+              openTutorProfile(navigation, {
+                tutor: tutorProfile,
+                contacted: true,
+              });
             }}
             disabled={!canOpenProfile}
             accessibilityLabel={canOpenProfile ? 'Voir le profil' : title}
@@ -613,6 +684,13 @@ export default function ChatScreen({ navigation, route }) {
           </View>
         </View>
 
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={
+          Platform.OS === 'ios' && !inTutorSession ? 'padding' : undefined
+        }
+        keyboardVerticalOffset={inTutorSession ? 0 : 8}
+      >
         {isTutor && isPending ? (
           <View style={styles.requestBanner}>
             <Text style={styles.requestBannerTitle}>Nouvelle demande</Text>
@@ -682,7 +760,20 @@ export default function ChatScreen({ navigation, route }) {
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <View style={styles.composer}>
+        <View
+          style={[
+            styles.composer,
+            {
+              paddingBottom:
+                10 +
+                (keyboardOpen
+                  ? inTutorSession
+                    ? keyboardHeight
+                    : 0
+                  : insets.bottom),
+            },
+          ]}
+        >
           {isTutor && tutorCanWrite ? (
             <Pressable
               style={styles.payRequestIcon}
@@ -695,9 +786,11 @@ export default function ChatScreen({ navigation, route }) {
           ) : null}
 
           <TextInput
+            ref={inputRef}
             style={[styles.input, !tutorCanWrite && styles.inputDisabled]}
             value={draft}
             onChangeText={setDraft}
+            autoFocus={false}
             placeholder={
               isTutor && isPending
                 ? 'Accepte la demande pour répondre…'
@@ -884,11 +977,6 @@ export default function ChatScreen({ navigation, route }) {
         </View>
       </Modal>
       </SafeAreaView>
-      <TutorProfileDetail
-        tutor={match?.tutor}
-        visible={profileOpen}
-        onClose={() => setProfileOpen(false)}
-      />
     </View>
   );
 }

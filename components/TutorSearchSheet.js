@@ -75,7 +75,10 @@ function popularSubjects(tutors) {
   return ranked.length ? ranked : SWIPE_FILTERS;
 }
 
-export default function TutorSearchSheet({ visible, onClose, filters, tutors }) {
+export default function TutorSearchSheet({ visible, onClose, filters, tutors, light = false }) {
+  const t = light ? lightStyles : {};
+  const iconMuted = '#8E8E93';
+  const keyboard = light ? 'light' : 'dark';
   const [subjectDraft, setSubjectDraft] = useState('');
   const [placeFocused, setPlaceFocused] = useState(false);
   const [recent, setRecent] = useState(recentSearches);
@@ -133,8 +136,8 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
       animationType="slide"
       onRequestClose={close}
     >
-      <View style={styles.root}>
-        <StatusBar style="light" />
+      <View style={[styles.root, t.root]}>
+        <StatusBar style={light ? 'dark' : 'light'} />
         <SafeAreaView style={styles.safe} edges={['top']}>
           <KeyboardAvoidingView
             style={styles.safe}
@@ -147,13 +150,13 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
               accessibilityLabel="Fermer la recherche"
               hitSlop={8}
             >
-              <Ionicons name="close" size={26} color={colors.white} />
+              <Ionicons name="close" size={26} color={light ? '#111111' : colors.white} />
             </Pressable>
-            <Text style={styles.title}>Recherche</Text>
+            <Text style={[styles.title, t.ink]}>Recherche</Text>
             <View style={styles.close} />
           </View>
 
-          <View style={styles.fields}>
+          <View style={[styles.fields, t.fields]}>
             <View style={styles.fieldRow}>
               <Pressable
                 onPress={close}
@@ -163,7 +166,7 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                 <Ionicons name="search" size={18} color="#8E8E93" />
               </Pressable>
               <TextInput
-                style={styles.input}
+                style={[styles.input, t.ink]}
                 value={subjectDraft}
                 onChangeText={(text) => {
                   setSubjectDraft(text);
@@ -172,35 +175,54 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                 }}
                 onFocus={() => setPlaceFocused(false)}
                 placeholder="Matière"
-                placeholderTextColor="#8E8E93"
-                keyboardAppearance="dark"
+                placeholderTextColor={iconMuted}
+                keyboardAppearance={keyboard}
                 autoCapitalize="sentences"
                 autoCorrect={false}
                 autoFocus
                 returnKeyType="search"
                 blurOnSubmit={false}
-                clearButtonMode="while-editing"
                 onSubmitEditing={close}
               />
+              {subjectDraft ? (
+                <Pressable
+                  onPress={() => {
+                    setSubjectDraft('');
+                    filters.setSubjectFilter(null);
+                  }}
+                  accessibilityLabel="Effacer la matière"
+                  hitSlop={10}
+                >
+                  <Ionicons name="close-circle" size={20} color={light ? '#AEAEB2' : '#C7C7CC'} />
+                </Pressable>
+              ) : null}
             </View>
-            <View style={styles.divider} />
+            <View style={[styles.divider, t.divider]} />
             <View style={styles.fieldRow}>
               <Ionicons name="location-outline" size={18} color="#8E8E93" />
               <TextInput
-                style={styles.input}
+                style={[styles.input, t.ink]}
                 value={filters.cityQuery}
                 onChangeText={filters.onCityChange}
                 onFocus={() => setPlaceFocused(true)}
                 placeholder="Lieu du cours"
-                placeholderTextColor="#8E8E93"
-                keyboardAppearance="dark"
+                placeholderTextColor={iconMuted}
+                keyboardAppearance={keyboard}
                 autoCapitalize="words"
                 autoCorrect={false}
                 returnKeyType="search"
                 blurOnSubmit={false}
-                clearButtonMode="while-editing"
                 onSubmitEditing={close}
               />
+              {filters.cityQuery ? (
+                <Pressable
+                  onPress={() => filters.onCityChange('')}
+                  accessibilityLabel="Effacer le lieu"
+                  hitSlop={10}
+                >
+                  <Ionicons name="close-circle" size={20} color={light ? '#AEAEB2' : '#C7C7CC'} />
+                </Pressable>
+              ) : null}
             </View>
           </View>
 
@@ -222,17 +244,17 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                     }}
                   >
                     <Ionicons name="location-outline" size={18} color="#8E8E93" />
-                    <Text style={styles.rowLabel}>{item.label}</Text>
+                    <Text style={[styles.rowLabel, t.row]}>{item.label}</Text>
                   </Pressable>
                 ))
               ) : (
-                <Text style={styles.emptyHint}>Aucune commune ne correspond.</Text>
+                <Text style={[styles.emptyHint, t.muted]}>Aucune commune ne correspond.</Text>
               )
             ) : (
               <>
                 {recent.length ? (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Recherche récente</Text>
+                    <Text style={[styles.sectionTitle, t.ink]}>Recherche récente</Text>
                     {recent.map((item) => (
                       <Pressable
                         key={item.key}
@@ -240,7 +262,7 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                         onPress={() => applyRecent(item)}
                       >
                         <Ionicons name="time-outline" size={18} color="#8E8E93" />
-                        <Text style={styles.rowLabel}>
+                        <Text style={[styles.rowLabel, t.row]}>
                           {searchTitle(item.subject, item.place?.label)}
                         </Text>
                       </Pressable>
@@ -249,7 +271,7 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                 ) : null}
 
                 <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Matières les plus enseignées</Text>
+                  <Text style={[styles.sectionTitle, t.ink]}>Matières les plus enseignées</Text>
                   {subjects.length ? (
                     subjects.map((name) => (
                       <Pressable
@@ -261,7 +283,9 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                         <Text
                           style={[
                             styles.rowLabel,
+                            t.row,
                             filters.activeFilter === name && styles.rowLabelOn,
+                            filters.activeFilter === name && t.ink,
                           ]}
                         >
                           {name}
@@ -269,7 +293,7 @@ export default function TutorSearchSheet({ visible, onClose, filters, tutors }) 
                       </Pressable>
                     ))
                   ) : (
-                    <Text style={styles.emptyHint}>Aucune matière ne correspond.</Text>
+                    <Text style={[styles.emptyHint, t.muted]}>Aucune matière ne correspond.</Text>
                   )}
                 </View>
               </>
@@ -375,4 +399,13 @@ const styles = StyleSheet.create({
     color: '#A1A1A6',
     paddingVertical: 8,
   },
+});
+
+const lightStyles = StyleSheet.create({
+  root: { backgroundColor: colors.white },
+  ink: { color: '#111111' },
+  row: { color: '#3A3A3C' },
+  muted: { color: '#6E6E73' },
+  fields: { backgroundColor: '#F2F2F7', borderColor: '#E5E5EA' },
+  divider: { backgroundColor: '#D1D1D6' },
 });

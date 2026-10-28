@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,84 +10,25 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 
-import TutorProfileDetail from '../components/TutorProfileDetail';
+import TutorDiscoverCard from '../components/TutorDiscoverCard';
+import { openTutorProfile } from '../components/TutorProfileDetail';
 import TutorRefineBar from '../components/TutorRefineBar';
 import TutorSearchSheet from '../components/TutorSearchSheet';
 import { colors, radii, shadows } from '../constants/theme';
-import { fetchFavoriteTutorIds, fetchMatches, fetchTutorProfiles } from '../lib/supabase';
-import {
-  MATCH_STATUS,
-  courseFormatLabel,
-} from '../lib/tutorConstants';
+import { fetchMatches, fetchTutorProfiles } from '../lib/supabase';
+import { MATCH_STATUS } from '../lib/tutorConstants';
 import { useFavoriteTutors } from '../hooks/useFavoriteTutors';
 import { useParentSearch } from '../lib/ParentSearchContext';
 
 const SCREEN_W = Dimensions.get('window').width;
 
-function formatRate(rate) {
-  const value = Number(rate);
-  if (!Number.isFinite(value)) return '—';
-  return Number.isInteger(value) ? `${value}` : value.toFixed(2);
-}
-
-function firstName(fullName) {
-  return String(fullName || 'le tuteur').trim().split(/\s+/)[0] || 'le tuteur';
-}
-
-function getInitials(name) {
-  return String(name || '?')
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function getLessonsGiven(tutor) {
-  const fromProfile = Number(tutor?.lessonsGiven ?? tutor?.coursesGiven);
-  if (Number.isFinite(fromProfile) && fromProfile >= 0) return Math.round(fromProfile);
-  return 0;
-}
-
-function lessonsGivenLabel(count) {
-  const n = Math.max(0, Math.round(Number(count) || 0));
-  return n === 1 ? '1 cours donné' : `${n} cours donnés`;
-}
-
-function placeFacts(tutor) {
-  return [
-    { icon: 'location-outline', text: tutor?.city || 'Lieu à préciser' },
-    {
-      icon: 'people-outline',
-      text: courseFormatLabel(tutor?.teachingFormats) || 'Format à préciser',
-    },
-    { icon: 'school-outline', text: tutor?.studyYear || 'Parcours à préciser' },
-  ];
-}
-
-const PREVIEW_CHIPS = 3;
-const PREVIEW_BIO_WORDS = 24;
-
-function limitWords(text, max) {
-  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-  if (words.length <= max) return words.join(' ');
-  return `${words.slice(0, max).join(' ')}…`;
-}
-
-function previewChips(tutor) {
-  const subjects = (
-    tutor?.specialties?.length ? tutor.specialties : [tutor?.subject]
-  ).filter((item) => item && String(item).toLowerCase() !== 'matière');
-  return (subjects.length ? subjects : ['À préciser']).slice(0, PREVIEW_CHIPS);
-}
-
 export default function SwipeScreen() {
+  const navigation = useNavigation();
   const isFocused = useIsFocused();
   const { height: windowHeight } = useWindowDimensions();
   const tightScreen = windowHeight < 700;
@@ -102,13 +42,13 @@ export default function SwipeScreen() {
   } = useFavoriteTutors();
   const { filters } = useParentSearch();
   const [allTutors, setAllTutors] = useState([]);
+  const [contactedIds, setContactedIds] = useState(() => new Set());
   const [index, setIndex] = useState(0);
   const [liked, setLiked] = useState([]);
   const [passed, setPassed] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
-  const [detailOpen, setDetailOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
   const [pageWidth, setPageWidth] = useState(SCREEN_W - 40);
@@ -138,46 +78,55 @@ export default function SwipeScreen() {
     setActionError(null);
 
     try {
-      const profiles = await fetchTutorProfiles({
-        excludeClerkId: userId,
-      });
-      let available = profiles;
-
-      if (userId) {
-        const [matches, favoriteIds] = await Promise.all([
-          fetchMatches(userId, {
-            statuses: [
-              MATCH_STATUS.PENDING,
-              MATCH_STATUS.ACCEPTED,
-              MATCH_STATUS.DECLINED,
-            ],
-          }),
-          fetchFavoriteTutorIds(userId),
-        ]);
-        const matchedIds = new Set(matches.map((match) => match.tutorId));
-        const savedIds = new Set(favoriteIds);
-        available = profiles.filter(
-          (tutor) => savedIds.has(tutor.id) || !matchedIds.has(tutor.id)
-        );
-      }
-
-      setAllTutors(available);
+      const [profiles, matches] = await Promise.all([
+        fetchTutorProfiles({
+          excludeClerkId: userId,
+        }),
+        userId
+          ? fetchMatches(userId, {
+              statuses: [MATCH_STATUS.PENDING, MATCH_STATUS.ACCEPTED],
+            })
+          : Promise.resolve([]),
+      ]);
+      setAllTutors(profiles);
+      setContactedIds(new Set(matches.map((match) => match.tutorId)));
       indexRef.current = 0;
       setIndex(0);
       setLiked([]);
       setPassed([]);
     } catch (err) {
       setAllTutors([]);
+      setContactedIds(new Set());
       setError(err?.message ?? 'Erreur de chargement.');
     } finally {
       setLoading(false);
     }
   }
 
+  useEffect(() => {
+    loadTutors();
+  }, [userId]);
+
   useFocusEffect(
     useCallback(() => {
-      loadTutors();
       reloadFavorites();
+      if (!userId) {
+        setContactedIds(new Set());
+        return undefined;
+      }
+      let cancelled = false;
+      fetchMatches(userId, {
+        statuses: [MATCH_STATUS.PENDING, MATCH_STATUS.ACCEPTED],
+      })
+        .then((matches) => {
+          if (!cancelled) {
+            setContactedIds(new Set(matches.map((match) => match.tutorId)));
+          }
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
     }, [userId])
   );
 
@@ -255,10 +204,13 @@ export default function SwipeScreen() {
     }
   }
 
-  function openDetails() {
-    if (!tutor) return;
+  function openProfile(target) {
+    if (!target) return;
     setActionError(null);
-    setDetailOpen(true);
+    openTutorProfile(navigation, {
+      tutor: target,
+      contacted: contactedIds.has(target.id),
+    });
   }
 
   const reset = () => {
@@ -296,6 +248,13 @@ export default function SwipeScreen() {
                 {searchLabel || 'Rechercher un tuteur...'}
               </Text>
             </Pressable>
+            <Pressable
+              style={styles.mapButton}
+              onPress={() => navigation.navigate('TutorMap')}
+              accessibilityLabel="Voir la carte"
+            >
+              <Ionicons name="map" size={20} color={colors.white} />
+            </Pressable>
           </View>
           <TutorRefineBar filters={filters} />
 
@@ -305,21 +264,6 @@ export default function SwipeScreen() {
             filters={filters}
             tutors={allTutors}
           />
-
-          <TutorProfileDetail
-            tutor={tutor}
-            visible={detailOpen}
-            onClose={() => setDetailOpen(false)}
-            onConversationStarted={() => {
-              if (!tutor) return;
-              setLiked((prev) => [...prev, tutor.name]);
-              scrollToTutor(index + 1);
-              showToast(
-                'Message envoyé ! Retrouve la discussion dans l’onglet Messages.'
-              );
-            }}
-          />
-
 
           <View style={styles.cardStage} onLayout={onStageLayout}>
             {loading ? (
@@ -344,7 +288,7 @@ export default function SwipeScreen() {
                   {tutors.length === 0
                     ? hasActiveFilters
                       ? 'Aucun tuteur ne correspond à ta recherche. Élargis la matière, le lieu, le prix ou le niveau.'
-                      : 'Tous les tuteurs sont déjà matchés, ou aucun profil n’est disponible.'
+                      : 'Aucun profil n’est disponible pour le moment.'
                     : `Demandes : ${liked.length || 0}\nPassés : ${passed.length || 0}\n\nRetrouve tes conversations dans Messages.`}
                 </Text>
                 <Pressable
@@ -372,146 +316,29 @@ export default function SwipeScreen() {
                 horizontal
                 pagingEnabled
                 directionalLockEnabled
-                nestedScrollEnabled
                 showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
+                keyboardShouldPersistTaps="always"
                 decelerationRate="fast"
                 style={styles.pager}
-                snapToInterval={pageWidth || undefined}
-                snapToAlignment="start"
-                disableIntervalMomentum
                 scrollEventThrottle={16}
                 onScroll={onTutorScroll}
               >
-                {tutors.map((item, position) => {
-                  const itemFavorite = isFavorite(item.id);
-                  const chips = previewChips(item);
-                  const facts = placeFacts(item);
-                  const hasRating = (item.rating || 0) > 0;
-                  const ratingLabel = hasRating
-                    ? `${item.rating.toFixed(1)} (${item.reviewCount || 0} avis)`
-                    : 'Pas encore d’avis';
-                  return (
+                {tutors.map((item) => (
                     <View
                       key={item.id}
                       style={[styles.page, { width: pageWidth }]}
                     >
-                      <View style={styles.previewCard}>
-                        <View style={[styles.previewTop, styles.previewFixed]}>
-                          <View style={[styles.previewAvatarWrap, tightScreen && styles.previewAvatarWrapTight]}>
-                            <View style={[styles.previewAvatar, tightScreen && styles.previewAvatarTight]}>
-                              {item.avatarUrl ? (
-                                <Image
-                                  source={{ uri: item.avatarUrl }}
-                                  style={styles.previewAvatarImage}
-                                />
-                              ) : (
-                                <Text style={styles.previewAvatarText}>
-                                  {getInitials(item.name)}
-                                </Text>
-                              )}
-                            </View>
-                            <View style={styles.verifiedBadge}>
-                              <Text style={styles.verifiedBadgeText} numberOfLines={1}>
-                                {lessonsGivenLabel(getLessonsGiven(item))}
-                              </Text>
-                            </View>
-                          </View>
-                          <View style={styles.previewIdentity}>
-                            <Text style={styles.previewName} numberOfLines={1}>
-                              {firstName(item.name)}
-                            </Text>
-                            <Text style={styles.previewRating} numberOfLines={1}>
-                              {hasRating ? (
-                                <Text style={styles.previewStar}>★ </Text>
-                              ) : null}
-                              {ratingLabel}
-                            </Text>
-                            <Text style={styles.previewPrice}>
-                              {formatRate(item.hourlyRate)} €/h
-                            </Text>
-                          </View>
-                          <Pressable
-                            style={styles.previewHeart}
-                            onPress={() => onToggleFavorite(item)}
-                            disabled={isToggling(item.id)}
-                            accessibilityLabel={
-                              itemFavorite
-                                ? 'Retirer des favoris'
-                                : 'Ajouter aux favoris'
-                            }
-                            hitSlop={8}
-                          >
-                            {isToggling(item.id) ? (
-                              <ActivityIndicator size="small" color="#3DDC97" />
-                            ) : (
-                              <Ionicons
-                                name={itemFavorite ? 'heart' : 'heart-outline'}
-                                size={22}
-                                color={itemFavorite ? '#3DDC97' : '#C7C7CC'}
-                              />
-                            )}
-                          </Pressable>
-                        </View>
-
-                        <View style={styles.previewFixed}>
-                          <View style={styles.previewDivider} />
-                          <Text style={styles.previewSection}>Spécialités</Text>
-                          <View style={[styles.previewChips, tightScreen && styles.previewChipsTight]}>
-                            {chips.map((chip, chipIndex) => (
-                              <View
-                                key={`${item.id}-${chip}-${chipIndex}`}
-                                style={styles.previewChip}
-                              >
-                                <Text style={styles.previewChipLabel}>{chip}</Text>
-                              </View>
-                            ))}
-                          </View>
-                        </View>
-
-                        <Text
-                          style={[
-                            item.bio ? styles.previewBio : styles.bioMuted,
-                            styles.previewBioSpace,
-                          ]}
-                          numberOfLines={3}
-                        >
-                          {item.bio
-                            ? limitWords(item.bio, PREVIEW_BIO_WORDS)
-                            : `${firstName(item.name)} n’a pas encore rédigé sa présentation.`}
-                        </Text>
-
-                        <View style={styles.previewFixed}>
-                          {facts.map((fact, factIndex) => (
-                            <View
-                              key={fact.icon}
-                              style={[
-                                styles.previewFact,
-                                factIndex === facts.length - 1 && styles.previewFactLast,
-                              ]}
-                            >
-                              <Ionicons name={fact.icon} size={16} color="#A1A1A6" />
-                              <Text style={styles.previewFactText} numberOfLines={1}>
-                                {fact.text}
-                              </Text>
-                            </View>
-                          ))}
-                        </View>
-                        <View style={styles.previewFooter}>
-                          <Pressable
-                            style={styles.discoverButton}
-                            onPress={openDetails}
-                            accessibilityLabel="Voir le profil"
-                          >
-                            <Text style={styles.discoverButtonLabel}>
-                              Voir le profil
-                            </Text>
-                          </Pressable>
-                        </View>
-                      </View>
+                      <TutorDiscoverCard
+                        tutor={item}
+                        tightScreen={tightScreen}
+                        favorite={isFavorite(item.id)}
+                        favoriteBusy={isToggling(item.id)}
+                        contacted={contactedIds.has(item.id)}
+                        onToggleFavorite={() => onToggleFavorite(item)}
+                        onOpenProfile={() => openProfile(item)}
+                      />
                     </View>
-                  );
-                })}
+                  ))}
               </ScrollView>
             )}
           </View>
@@ -591,6 +418,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#2C2C2E',
+  },
+  mapButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: '#1C1C1E',
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchValue: {
     flex: 1,

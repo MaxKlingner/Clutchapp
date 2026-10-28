@@ -1,10 +1,20 @@
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 
+import { colors } from '../constants/theme';
 import { ensureTutorProfile } from '../lib/supabase';
 import TutorProfileEditor from './TutorProfileEditor';
 
@@ -17,6 +27,7 @@ function hasPublishedAnnouncement(profile) {
 
 export default function TutorProfileEditScreen() {
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const { userId } = useAuth();
   const [published, setPublished] = useState(false);
 
@@ -43,63 +54,87 @@ export default function TutorProfileEditScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.title}>
-          {published ? 'Modifier mon annonce' : 'Créer mon annonce'}
-        </Text>
-        <Pressable
-          style={styles.closeButton}
-          onPress={() => navigation.goBack()}
-          accessibilityLabel="Fermer l’édition du profil"
-          hitSlop={8}
+    <View style={styles.root}>
+      {isFocused ? <StatusBar style="light" /> : null}
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.header}>
+          <Pressable
+            style={styles.closeButton}
+            onPress={() => navigation.goBack()}
+            accessibilityLabel="Fermer l’édition du profil"
+            hitSlop={8}
+          >
+            <Ionicons name="close" size={22} color={colors.white} />
+          </Pressable>
+          <Text style={styles.title}>
+            {published ? 'Mon annonce' : 'Créer mon annonce'}
+          </Text>
+          <Text style={styles.subtitle}>Ce que les parents voient dans Découvrir</Text>
+        </View>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <Ionicons name="close" size={24} color="#1B5E3B" />
-        </Pressable>
-      </View>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <TutorProfileEditor />
-      </ScrollView>
-    </SafeAreaView>
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
+            showsVerticalScrollIndicator={false}
+          >
+            <TutorProfileEditor />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#111111',
+  },
   safe: {
     flex: 1,
-    backgroundColor: '#F3F6F4',
+  },
+  flex: {
+    flex: 1,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 22,
+    paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 4,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#10261C',
+    paddingBottom: 14,
+    alignItems: 'center',
+    zIndex: 2,
+    backgroundColor: '#111111',
   },
   closeButton: {
+    position: 'absolute',
+    left: 12,
+    top: 4,
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8F5EE',
+    backgroundColor: '#2C2C2E',
+    zIndex: 2,
   },
-  scroll: {
-    flex: 1,
+  title: {
+    textAlign: 'center',
+    fontSize: 28,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  subtitle: {
+    marginTop: 4,
+    textAlign: 'center',
+    fontSize: 15,
+    color: '#A1A1A6',
   },
   content: {
-    paddingHorizontal: 22,
-    paddingTop: 8,
+    paddingHorizontal: 20,
     paddingBottom: 40,
   },
 });

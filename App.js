@@ -17,19 +17,24 @@ import { Ionicons } from '@expo/vector-icons';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 
 import SwipeScreen from './screens/SwipeScreen';
+import TutorMapScreen from './screens/TutorMapScreen';
 import FavoritesScreen from './screens/FavoritesScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import ChatScreen from './screens/ChatScreen';
 import WalletScreen from './screens/WalletScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import AccountScreen from './screens/AccountScreen';
+import ChangePasswordScreen from './screens/ChangePasswordScreen';
 import SignInScreen from './screens/SignInScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import WelcomeScreen from './screens/WelcomeScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import { ParentSearchProvider } from './lib/ParentSearchContext';
 import TutorHomeScreen from './screens/TutorHomeScreen';
-import TutorProfileEditScreen from './screens/TutorProfileEditScreen';
+import TutorGuideScreen from './screens/TutorGuideScreen';
+import TutorAnnouncementScreen from './screens/TutorAnnouncementScreen';
+import TutorSectionScreen from './screens/TutorSectionScreen';
+import TutorProfileDetail from './components/TutorProfileDetail';
 import {
   clerkPublishableKey,
   isClerkConfigured,
@@ -67,6 +72,7 @@ const tabScreenOptions = ({ route }) => ({
     const icons = {
       Matchs: 'book',
       Favorites: 'heart',
+      TutorGuide: 'home',
       TutorHome: 'school',
       Messages: 'chatbubbles',
       Wallet: 'wallet',
@@ -78,7 +84,11 @@ const tabScreenOptions = ({ route }) => ({
 
 function ParentMainTabs() {
   return (
-    <Tab.Navigator initialRouteName="Matchs" screenOptions={tabScreenOptions}>
+    <Tab.Navigator
+      key="parent-main"
+      initialRouteName="Matchs"
+      screenOptions={tabScreenOptions}
+    >
       <Tab.Screen
         name="Matchs"
         component={SwipeScreen}
@@ -136,13 +146,29 @@ function ParentMainTabs() {
 function TutorMainTabs() {
   return (
     <Tab.Navigator
-      initialRouteName="TutorHome"
+      key="tutor-main"
+      initialRouteName="TutorGuide"
       screenOptions={tabScreenOptions}
     >
       <Tab.Screen
+        name="TutorGuide"
+        component={TutorGuideScreen}
+        options={{
+          title: 'Accueil',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
+      />
+      <Tab.Screen
         name="TutorHome"
         component={TutorHomeScreen}
-        options={{ title: 'Accueil' }}
+        options={{
+          title: 'Mon espace',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
       />
       <Tab.Screen
         name="Messages"
@@ -164,7 +190,40 @@ function TutorMainTabs() {
           tabBarInactiveTintColor: '#8E8E93',
         }}
       />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          title: 'Profil',
+          tabBarStyle: darkTabBar,
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#8E8E93',
+        }}
+      />
     </Tab.Navigator>
+  );
+}
+
+function TutorSessionStack() {
+  return (
+    <Stack.Navigator
+      initialRouteName="TutorProfile"
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: '#111111' },
+      }}
+    >
+      <Stack.Screen name="TutorProfile" component={TutorProfileDetail} />
+      <Stack.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{
+          animation: 'slide_from_right',
+          gestureEnabled: true,
+          keyboardHandlingEnabled: false,
+        }}
+      />
+    </Stack.Navigator>
   );
 }
 
@@ -175,6 +234,24 @@ function ParentTabs() {
       screenOptions={{ headerShown: false }}
     >
       <Stack.Screen name="MainTabs" component={ParentMainTabs} />
+      <Stack.Screen
+        name="TutorMap"
+        component={TutorMapScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#D5DDE3' },
+        }}
+      />
+      <Stack.Screen
+        name="TutorSession"
+        component={TutorSessionStack}
+        options={{
+          presentation: 'fullScreenModal',
+          animation: 'slide_from_bottom',
+          keyboardHandlingEnabled: false,
+          contentStyle: { backgroundColor: '#111111' },
+        }}
+      />
       <Stack.Screen
         name="Chat"
         component={ChatScreen}
@@ -192,6 +269,14 @@ function ParentTabs() {
       <Stack.Screen
         name="Account"
         component={AccountScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#111111' },
+        }}
+      />
+      <Stack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
         options={{
           animation: 'slide_from_right',
           contentStyle: { backgroundColor: '#111111' },
@@ -223,13 +308,32 @@ function TutorTabs() {
         options={{ presentation: 'modal' }}
       />
       <Stack.Screen
-        name="EditTutorProfile"
-        component={TutorProfileEditScreen}
-        options={{ presentation: 'modal' }}
+        name="EditTutorAnnouncement"
+        component={TutorAnnouncementScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#111111' },
+        }}
+      />
+      <Stack.Screen
+        name="EditTutorSection"
+        component={TutorSectionScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#111111' },
+        }}
       />
       <Stack.Screen
         name="Account"
         component={AccountScreen}
+        options={{
+          animation: 'slide_from_right',
+          contentStyle: { backgroundColor: '#111111' },
+        }}
+      />
+      <Stack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
         options={{
           animation: 'slide_from_right',
           contentStyle: { backgroundColor: '#111111' },
@@ -373,15 +477,32 @@ function RootNavigator() {
   return isSignedIn ? <RoleGate /> : <AuthNavigator />;
 }
 
+function navKeyFor(isSignedIn, role) {
+  if (!isSignedIn) return 'auth';
+  if (role === ROLES.TUTOR) return 'tutor';
+  if (role === ROLES.PARENT) return 'parent';
+  return 'onboarding';
+}
+
+function KeyedNavigation() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { role } = useRole();
+  const navKey = navKeyFor(isLoaded && isSignedIn, role);
+
+  return (
+    <NavigationContainer key={navKey}>
+      <StatusBar style="dark" />
+      <RootNavigator />
+    </NavigationContainer>
+  );
+}
+
 function AppContent() {
   return (
     <SafeAreaProvider>
       <RoleProvider>
         <FavoriteTutorsProvider>
-          <NavigationContainer>
-            <StatusBar style="dark" />
-            <RootNavigator />
-          </NavigationContainer>
+          <KeyedNavigation />
         </FavoriteTutorsProvider>
       </RoleProvider>
     </SafeAreaProvider>

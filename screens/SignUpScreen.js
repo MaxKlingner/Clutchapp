@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSignUp } from '@clerk/clerk-expo';
+import { useClerk, useSignUp } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 
 import AuthStep, { authStyles } from '../components/AuthStep';
@@ -16,6 +16,32 @@ import {
 
 function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isBirthDate(value) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value || '').trim());
+  if (!match) return false;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return false;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return year >= 1900 && date <= today;
+}
+
+function formatBirthInput(text) {
+  const digits = String(text || '').replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 }
 
 function placeFromQuery(query, picked) {
@@ -58,6 +84,7 @@ function suggestionPlace(loc, query) {
 
 export default function SignUpScreen({ onBack, onGoToSignIn }) {
   const { signUp, setActive, isLoaded } = useSignUp();
+  const clerk = useClerk();
   const [step, setStep] = useState('email');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -69,6 +96,8 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
   const [subject, setSubject] = useState(null);
   const [level, setLevel] = useState(null);
   const [coursePlace, setCoursePlace] = useState(null);
+  const [gender, setGender] = useState(null);
+  const [birthDate, setBirthDate] = useState('');
   const [locality, setLocality] = useState('');
   const [pickedPlace, setPickedPlace] = useState(null);
   const [promoEmails, setPromoEmails] = useState(false);
@@ -91,8 +120,16 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
       setStep('code');
       return;
     }
-    if (step === 'intent') {
+    if (step === 'gender') {
       setStep('name');
+      return;
+    }
+    if (step === 'birth') {
+      setStep('gender');
+      return;
+    }
+    if (step === 'intent') {
+      setStep('birth');
       return;
     }
     if (step === 'audience') {
@@ -197,6 +234,7 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
     const chosenSubject = overrides?.subject !== undefined ? overrides.subject : subject;
     const chosenLevel = overrides?.studentLevel !== undefined ? overrides.studentLevel : level;
     const chosenFormat = overrides?.format !== undefined ? overrides.format : coursePlace;
+    const savedFormat = chosenFormat === 'any' ? null : chosenFormat;
 
     setError('');
     setSubmitting(true);
@@ -213,14 +251,34 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
         seekingFor: role === ROLES.PARENT ? audience : null,
         searchFilters:
           role === ROLES.PARENT
-            ? { subject: chosenSubject, studentLevel: chosenLevel, format: chosenFormat }
+            ? { subject: chosenSubject, studentLevel: chosenLevel, format: savedFormat }
             : null,
         city: place.city,
         postalCode: place.postalCode,
         latitude: place.latitude,
         longitude: place.longitude,
       });
+      await signUp
+        .update({
+          firstName: given,
+          lastName: family,
+          unsafeMetadata: { gender, birthDate },
+        })
+        .catch(() => {});
       await setActive({ session: sessionId });
+      if (given || family || gender || birthDate) {
+        await clerk.user
+          ?.update({
+            firstName: given,
+            lastName: family,
+            unsafeMetadata: {
+              ...(clerk.user?.unsafeMetadata || {}),
+              gender,
+              birthDate,
+            },
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       setError(err?.message || 'Impossible d’enregistrer ces informations.');
       setSubmitting(false);
@@ -229,6 +287,8 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
 
   const sequence = [
     'name',
+    'gender',
+    'birth',
     'intent',
     ...(intent === 'teach' ? [] : ['audience']),
     'place',
@@ -292,6 +352,37 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
       secureTextEntry: false,
       actionLabel: 'Suivant',
       ready: Boolean(firstName.trim()) && Boolean(lastName.trim()),
+      onAction: () => {
+        setError('');
+        setStep('gender');
+      },
+    },
+    gender: {
+      title: 'Quel est votre genre ?',
+      options: [
+        { value: 'Homme', label: 'Homme' },
+        { value: 'Femme', label: 'Femme' },
+        { value: 'Je ne souhaite pas préciser', label: 'Je ne souhaite pas préciser' },
+      ],
+      selected: gender,
+      onSelect: setGender,
+      actionLabel: 'Suivant',
+      ready: Boolean(gender),
+      onAction: () => {
+        setError('');
+        setStep('birth');
+      },
+    },
+    birth: {
+      title: 'Votre date de naissance ?',
+      hint: 'Au format JJ/MM/AAAA.',
+      value: birthDate,
+      onChangeText: (text) => setBirthDate(formatBirthInput(text)),
+      placeholder: 'JJ/MM/AAAA',
+      keyboardType: 'number-pad',
+      secureTextEntry: false,
+      actionLabel: 'Suivant',
+      ready: isBirthDate(birthDate),
       onAction: () => {
         setError('');
         setStep('intent');
@@ -391,10 +482,11 @@ export default function SignUpScreen({ onBack, onGoToSignIn }) {
       },
     },
     format: {
-      title: 'Où se passe le cours ?',
+      title: 'Comment se passe le cours ?',
       options: [
         { value: FORMAT_IN_PERSON, label: 'Face à face' },
         { value: FORMAT_REMOTE, label: 'À distance' },
+        { value: 'any', label: 'Peu importe' },
       ],
       selected: coursePlace,
       onSelect: setCoursePlace,
